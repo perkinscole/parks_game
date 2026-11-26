@@ -18,3 +18,11 @@ with their origin at the centre of their footprint.
 
 Only the first mesh found in the file is used, with the materials it came with.
 Trees are drawn thousands at a time, so keep them low-poly (a few hundred triangles).
+
+## What is here now
+
+The building models in this folder were generated with Meshy and are used automatically.
+`optional/` holds a Meshy spruce, aspen and boulder that are **not** active: the park draws
+tens of thousands of trees, and at about 2,000 triangles each these would be too heavy for
+most machines. To try them anyway, move a file up into this folder. Delete any `.glb` here
+to go back to the built-in model.

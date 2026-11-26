@@ -225,25 +225,40 @@ static func windows(kind: int) -> ArrayMesh:
 
 static var _ext_cache := {}
 
-## Loads models/<name>.glb if the player has supplied one (see models/README.md).
+## Loads models/<name>.glb if one has been supplied (see models/README.md).
+## The file is read directly, so it works without opening the Godot editor.
 static func external(name: String) -> Mesh:
 	if _ext_cache.has(name):
 		return _ext_cache[name]
 	var found: Mesh = null
 	var path := "res://models/%s.glb" % name
-	if ResourceLoader.exists(path):
-		var scene = load(path)
-		if scene is PackedScene:
-			var root: Node = scene.instantiate()
-			var stack: Array = [root]
-			while not stack.is_empty() and found == null:
-				var node: Node = stack.pop_back()
-				if node is MeshInstance3D and node.mesh != null:
-					found = node.mesh
-				stack.append_array(node.get_children())
-			root.free()
+	if FileAccess.file_exists(path):
+		var doc := GLTFDocument.new()
+		var state := GLTFState.new()
+		if doc.append_from_file(path, state) == OK:
+			var root: Node = doc.generate_scene(state)
+			if root != null:
+				var stack: Array = [root]
+				while not stack.is_empty() and found == null:
+					var node: Node = stack.pop_back()
+					if node is MeshInstance3D and node.mesh != null:
+						found = node.mesh
+					elif node is ImporterMeshInstance3D and node.mesh != null:
+						found = node.mesh.get_mesh()
+					stack.append_array(node.get_children())
+				root.free()
 	_ext_cache[name] = found
 	return found
+
+
+## Transform that stands a supplied model on the ground, centred, scaled so
+## its height (or, with `by_width`, its footprint) matches `size`.
+static func fit(mesh: Mesh, size: float, by_width: bool = false) -> Transform3D:
+	var box := mesh.get_aabb()
+	var extent := maxf(box.size.x, box.size.z) if by_width else box.size.y
+	var s := size / maxf(extent, 0.0001)
+	var c := box.get_center()
+	return Transform3D(Basis().scaled(Vector3(s, s, s)), Vector3(-c.x * s, -box.position.y * s, -c.z * s))
 
 static func bush() -> ArrayMesh:
 	if _cache.has("bush"):

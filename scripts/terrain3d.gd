@@ -16,6 +16,9 @@ const GW := World.W * SUB + 1
 const GH := World.H * SUB + 1
 const LIT := [D.B.VISITOR_CENTER, D.B.RANGER, D.B.RESEARCH, D.B.SNACK, D.B.CAMP, D.B.GATE, D.B.RESTROOM]
 const NO_FOUNDATION := [D.B.BIN, D.B.SIGN, D.B.PICNIC, D.B.TRAILHEAD, D.B.CRAG, D.B.GATE, D.B.CAMP]
+# footprint width (in tiles) that supplied building models are scaled to
+const EXT_WIDTH := {D.B.PICNIC: 0.42, D.B.TRAILHEAD: 0.36, D.B.HIDE: 0.62, D.B.RESTROOM: 0.8, D.B.SNACK: 0.72, D.B.GATE: 1.35,
+	D.B.OVERLOOK: 0.92, D.B.VISITOR_CENTER: 1.85, D.B.RANGER: 1.5, D.B.RESEARCH: 1.6, D.B.CAMP: 1.85, D.B.BIN: 0.3, D.B.SIGN: 0.2, D.B.CRAG: 0.9}
 const VEG := ["trunk", "leaf", "conifer", "rock", "flower", "bush", "reed"]
 
 var world: World
@@ -141,8 +144,8 @@ func setup(w: World, f: Font) -> void:
 	_deck.material_override = mat
 	add_child(_deck)
 
-	_meshes = {"trunk": Models.trunk(), "leaf": _ext("broadleaf", Models.leaf()), "conifer": _ext("conifer", Models.conifer()),
-		"rock": _ext("rock", Models.rock()), "flower": Models.flower(), "bush": _ext("bush", Models.bush()), "reed": Models.reed(),
+	_meshes = {"trunk": Models.trunk(), "leaf": _ext("broadleaf", Models.leaf(), 1.35), "conifer": _ext("conifer", Models.conifer(), 1.95),
+		"rock": _ext("rock", Models.rock(), 0.3), "flower": Models.flower(), "bush": _ext("bush", Models.bush(), 0.2), "reed": Models.reed(),
 		"flame": Models.flame(), "litter": Models.litter(), "thistle": Models.thistle(), "milfoil": Models.milfoil(), "orchid": Models.orchid()}
 	for key in ["flame", "litter", "thistle", "milfoil", "orchid", "outer"]:
 		_mm[key] = _new_mm("conifer" if key == "outer" else key, self)
@@ -180,11 +183,10 @@ func setup(w: World, f: Font) -> void:
 
 
 ## Uses models/<name>.glb instead of the built-in mesh when one is provided.
-func _ext(name: String, fallback: Mesh) -> Mesh:
+func _ext(name: String, fallback: Mesh, height: float) -> Mesh:
 	var m := Models.external(name)
 	if m != null:
-		_external[fallback] = true
-		_external[m] = true
+		_external[m] = Models.fit(m, height)
 		return m
 	return fallback
 
@@ -833,9 +835,12 @@ func _deck_mesh() -> ArrayMesh:
 
 func _fill(mm: MultiMesh, xforms: Array, colors: Array) -> void:
 	mm.instance_count = xforms.size()
+	var supplied: bool = _external.has(mm.mesh)
+	var fit_xf: Transform3D = _external[mm.mesh] if supplied else Transform3D.IDENTITY
 	for i in xforms.size():
-		mm.set_instance_transform(i, xforms[i])
-		mm.set_instance_color(i, colors[i])
+		# supplied models carry their own colours and need fitting to size
+		mm.set_instance_transform(i, xforms[i] * fit_xf if supplied else xforms[i])
+		mm.set_instance_color(i, Color.WHITE if supplied else colors[i])
 
 
 func _xf(x: float, z: float, s: float, yaw: float, sink: float = 0.0, squash: float = 1.0) -> Transform3D:
@@ -879,14 +884,16 @@ func _rebuild_region(key: Vector2i) -> void:
 					if bio == D.BIOME.ALPINE: s = 0.6 + hh * 0.6
 					elif bio == D.BIOME.DESERT: s = 0.55 + hh * 0.3
 					var xf := _xf(px, pz, s, hh * TAU, 0.08, 0.9 + D.hash2(x, y, 70 + k) * 0.35)
-					out.trunk[0].append(xf)
+					var own_trunk: bool = _external.has(_meshes["conifer" if kind == 2 else "leaf"])
+					if not own_trunk:
+						out.trunk[0].append(xf)
 					if kind == 2:
-						out.trunk[1].append(Color.WHITE)
+						if not own_trunk: out.trunk[1].append(Color.WHITE)
 						out.conifer[0].append(xf)
 						out.conifer[1].append(_conifer_color(D.hash2(x, y, 12 + k)))
 					else:
 						# aspens have pale bark
-						out.trunk[1].append(Color(2.6, 2.5, 2.3) if bio == D.BIOME.VALLEY else Color.WHITE)
+						if not own_trunk: out.trunk[1].append(Color(2.6, 2.5, 2.3) if bio == D.BIOME.VALLEY else Color.WHITE)
 						out.leaf[0].append(xf)
 						var pal: Array = leaf_pal[season]
 						var col: Color = pal[0].lerp(pal[1], D.hash2(x, y, 12 + k))
@@ -1029,6 +1036,8 @@ func _sync_structures() -> void:
 		mi.mesh = ext if ext != null else Models.structure(kind)
 		if ext == null:
 			mi.material_override = mat
+		else:
+			mi.transform = Models.fit(ext, EXT_WIDTH.get(kind, sz.x * 0.9), true)
 		holder.add_child(mi)
 		if not (kind in NO_FOUNDATION):
 			var base := MeshInstance3D.new()
