@@ -8,7 +8,7 @@ extends Node3D
 
 const CH := 16 # tiles per terrain chunk
 const SUB := 3 # terrain vertices per tile edge
-const REG := 20 # tiles per vegetation region
+const REG := 10 # tiles per vegetation region
 const PX := 12 # path-mask pixels per tile
 const DECK := 0.16 # height of bridges and boardwalks above the water
 const BORDER := 90 # tiles of scenery beyond the playable map
@@ -20,7 +20,8 @@ const NO_FOUNDATION := [D.B.BIN, D.B.SIGN, D.B.PICNIC, D.B.TRAILHEAD, D.B.CRAG, 
 # footprint width (in tiles) that supplied building models are scaled to
 const EXT_WIDTH := {D.B.PICNIC: 0.42, D.B.TRAILHEAD: 0.36, D.B.HIDE: 0.62, D.B.RESTROOM: 0.8, D.B.SNACK: 0.72, D.B.GATE: 1.35,
 	D.B.OVERLOOK: 0.92, D.B.VISITOR_CENTER: 1.85, D.B.RANGER: 1.5, D.B.RESEARCH: 1.6, D.B.CAMP: 1.85, D.B.BIN: 0.3, D.B.SIGN: 0.2, D.B.CRAG: 0.9}
-const VEG := ["trunk", "leaf", "conifer", "conifer2", "rock", "flower", "bush", "reed", "grass"]
+const VEG := ["trunk", "leaf", "conifer", "conifer2", "rock", "rock2", "rock_red", "flower", "bush", "reed", "grass"]
+const HD := {"conifer": "conifer_hd", "conifer2": "conifer2_hd", "leaf": "leaf_hd"}
 
 var world: World
 var season := 0
@@ -54,6 +55,10 @@ var _mm := {}
 var _meshes := {}
 var _external := {}
 var _tree_nodes: Array[MultiMeshInstance3D] = []
+var _veg: Array = []
+var _hd_nodes: Array[MultiMeshInstance3D] = []
+var _card_nodes: Array[MultiMeshInstance3D] = []
+var _tree_detail := 0.0
 var _grass_nodes: Array[MultiMeshInstance3D] = []
 var grass_mat: ShaderMaterial
 var water_mat: ShaderMaterial
@@ -167,7 +172,7 @@ func setup(w: World, f: Font) -> void:
 
 	_meshes = {"trunk": Models.trunk(), "leaf": _ext("broadleaf", Models.leaf(), 1.35), "conifer": _ext("conifer", Models.conifer(), 1.95),
 		"conifer2": _ext("conifer2", Models.conifer(), 2.1), "conifer_far": Models.conifer(),
-		"rock": _ext("rock", Models.rock(), 0.3), "flower": Models.flower(), "bush": _ext("bush", Models.bush(), 0.2), "reed": Models.reed(), "grass": Models.grass_tuft(),
+		"rock": _ext("rock", Models.rock(), 0.3), "rock2": _ext("rock2", Models.rock(), 0.3), "rock_red": _ext("rock_red", Models.rock(), 0.3), "flower": Models.flower(), "bush": _ext("bush", Models.bush(), 0.2), "reed": Models.reed(), "grass": Models.grass_tuft(),
 		"flame": Models.flame(), "litter": Models.litter(), "thistle": Models.thistle(), "milfoil": Models.milfoil(), "orchid": Models.orchid()}
 	# baked cut-out trees (models/impostors) take priority: they look detailed and cost almost nothing
 	# one or two canopy layers are enough to close the tree from above without looking stacked
@@ -178,6 +183,14 @@ func setup(w: World, f: Font) -> void:
 		if card != null:
 			_meshes[pair[0]] = card
 			_cards[card] = true
+	# full 3D trees stand in for the cut-outs close to the camera
+	_veg = VEG.duplicate()
+	for pair in [["conifer", "trees/spruce", 2.0], ["conifer2", "trees/pine", 2.15], ["leaf", "trees/aspen", 1.5]]:
+		var hd := Models.external(pair[1])
+		if hd != null and _cards.has(_meshes[pair[0]]):
+			_external[hd] = Models.fit(hd, pair[2])
+			_meshes[HD[pair[0]]] = hd
+			_veg.append(HD[pair[0]])
 	for key in ["flame", "litter", "thistle", "milfoil", "orchid", "outer"]:
 		_mm[key] = _new_mm("conifer_far" if key == "outer" else key, self)
 	for ry in range(0, ceili(World.H / float(REG))):
@@ -185,7 +198,7 @@ func setup(w: World, f: Font) -> void:
 			var holder := Node3D.new()
 			add_child(holder)
 			var mms := {}
-			for key in VEG:
+			for key in _veg:
 				mms[key] = _new_mm(key, holder)
 			_regions[Vector2i(rx, ry)] = mms
 			var trees_here: Array = []
@@ -253,14 +266,35 @@ func _new_mm(key: String, parent: Node) -> MultiMesh:
 		_grass_nodes.append(mmi)
 	if key in ["trunk", "leaf", "conifer", "conifer2"]:
 		_tree_nodes.append(mmi)
-	elif key in ["flower", "bush", "reed", "rock"]:
+		if _cards.has(mm.mesh) and _meshes.has(HD.get(key, "")):
+			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			_card_nodes.append(mmi)
+	elif key.ends_with("_hd"):
+		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		mmi.visible = false
+		_tree_nodes.append(mmi)
+		_hd_nodes.append(mmi)
+	elif key in ["flower", "bush", "reed", "rock", "rock2", "rock_red"]:
 		# small ground cover is only worth drawing up close
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mmi.visibility_range_end = 95.0 if key != "rock" else 150.0
+		mmi.visibility_range_end = 95.0 if not key.begins_with("rock") else 150.0
 		mmi.visibility_range_end_margin = 12.0
 		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	parent.add_child(mmi)
 	return mm
+
+
+## Within this distance of the camera trees are drawn as full 3D models;
+## beyond it they are flat cut-outs. Zero turns the 3D trees off.
+func set_tree_detail(dist: float) -> void:
+	_tree_detail = dist
+	for n in _hd_nodes:
+		n.visible = dist > 0.0
+		n.visibility_range_end = dist
+		n.visibility_range_end_margin = 5.0
+	for n in _card_nodes:
+		n.visibility_range_begin = dist
+		n.visibility_range_begin_margin = 5.0 if dist > 0.0 else 0.0
 
 
 ## Grass blades are the first thing to drop on slower machines.
@@ -957,7 +991,7 @@ func _conifer_color(hh: float) -> Color:
 
 func _rebuild_region(key: Vector2i) -> void:
 	var out := {}
-	for name in VEG:
+	for name in _veg:
 		out[name] = [[], []]
 	var bloom := [Color("fffbe6"), Color("f2cf4a"), Color("e98ab0"), Color("a887d6")]
 	var leaf_pal := [
@@ -1028,6 +1062,9 @@ func _rebuild_region(key: Vector2i) -> void:
 						if not own_trunk: out.trunk[1].append(Color.WHITE)
 						out[mesh_key][0].append(xf)
 						out[mesh_key][1].append(_conifer_color(D.hash2(x, y, 12 + k)))
+						if out.has(HD[mesh_key]):
+							out[HD[mesh_key]][0].append(xf)
+							out[HD[mesh_key]][1].append(Color.WHITE)
 					else:
 						# aspens have pale bark
 						if not own_trunk: out.trunk[1].append(Color(2.6, 2.5, 2.3) if bio != D.BIOME.DESERT else Color.WHITE)
@@ -1039,17 +1076,27 @@ func _rebuild_region(key: Vector2i) -> void:
 						if is_card and season == 2:
 							col = Color(1.0, 0.72, 0.2)
 						out.leaf[1].append(col)
-			elif t == D.T.ROCK and bio != D.BIOME.DESERT and h < 0.1:
-				out.rock[0].append(_xf(x + h2, y + h * 9.0, 0.5 + h2 * 1.3, h * TAU, 0.06))
-				out.rock[1].append(Color.WHITE.darkened(h2 * 0.25))
+						if out.has("leaf_hd"):
+							out.leaf_hd[0].append(xf)
+							out.leaf_hd[1].append(Color.WHITE)
+			elif (t == D.T.ROCK or t == D.T.PEAK) and bio != D.BIOME.DESERT and h < (0.3 if t == D.T.ROCK else 0.14):
+				# boulders and scree: one big block with smaller ones fallen around it
+				var rk := "rock" if h2 < 0.5 else "rock2"
+				var big := 0.6 + h2 * 2.6 * (h / 0.3)
+				out[rk][0].append(_xf(x + h2, y + fmod(h * 9.0, 1.0), big, h * 40.0, 0.1 * big, 0.75 + h2 * 0.5))
+				out[rk][1].append(Color.WHITE)
+				for k in 2:
+					var rk2 := "rock2" if rk == "rock" else "rock"
+					out[rk2][0].append(_xf(x + D.hash2(x, y, 20 + k), y + D.hash2(x, y, 30 + k), 0.25 + D.hash2(x, y, 40 + k) * 0.5, k * 2.3 + h * 9.0, 0.04))
+					out[rk2][1].append(Color.WHITE)
 			elif bio == D.BIOME.DESERT and (t == D.T.GRASS or t == D.T.SAND):
 				var n := 3 if t == D.T.GRASS else (1 if h < 0.35 else 0)
 				for k in n:
 					out.bush[0].append(_xf(x + D.hash2(x, y, 20 + k), y + D.hash2(x, y, 30 + k), 0.6 + D.hash2(x, y, 40 + k) * 0.7, k * 2.0))
 					out.bush[1].append(Color("7d8a6a").lerp(Color("9a9a72"), h2))
-				if h < 0.06:
-					out.rock[0].append(_xf(x + h2, y + h * 9.0, 0.7 + h2 * 1.5, h * TAU, 0.04))
-					out.rock[1].append(Color(1.25, 0.72, 0.5))
+				if h < 0.1:
+					out.rock_red[0].append(_xf(x + h2, y + fmod(h * 9.0, 1.0), 0.6 + h2 * 2.2, h * 40.0, 0.08, 0.8 + h2 * 0.4))
+					out.rock_red[1].append(Color.WHITE)
 			elif bio == D.BIOME.WETLAND and t == D.T.GRASS:
 				for k in 4:
 					out.reed[0].append(_xf(x + D.hash2(x, y, 20 + k), y + D.hash2(x, y, 30 + k), 0.7 + D.hash2(x, y, 40 + k) * 0.7, k * 1.3))
@@ -1062,11 +1109,11 @@ func _rebuild_region(key: Vector2i) -> void:
 				if h2 < 0.22:
 					out.bush[0].append(_xf(x + h, y + h2 * 4.0, 0.5 + h * 0.6, h * 9.0))
 					out.bush[1].append(Color("3f6a34").lerp(Color("5f8a3f"), h) if season != 3 else Color("9aa39c"))
-				if bio == D.BIOME.ALPINE and h < 0.05:
-					out.rock[0].append(_xf(x + h2, y + h * 18.0, 0.4 + h2 * 1.0, h * TAU, 0.06))
-					out.rock[1].append(Color.WHITE.darkened(h2 * 0.2))
+				if h < (0.09 if bio == D.BIOME.ALPINE else 0.012):
+					out.rock2[0].append(_xf(x + h2, y + fmod(h * 18.0, 1.0), 0.4 + h2 * 1.3, h * 40.0, 0.08))
+					out.rock2[1].append(Color.WHITE)
 	var mms: Dictionary = _regions[key]
-	for name in VEG:
+	for name in _veg:
 		_fill(mms[name], out[name][0], out[name][1])
 	if key == Vector2i.ZERO:
 		var xs: Array = []
@@ -1213,9 +1260,32 @@ func _sync_structures() -> void:
 		_struct_nodes[id] = holder
 
 
+## Boulders and rubble heaped around a landmark's foot so it grows out of the
+## ground instead of sitting on it.
+func _landmark_rocks(kind: String, pos: Vector3, width: float) -> void:
+	var names := ["rock_red"] if kind == "arch" else ["rock", "rock2"]
+	var n := 16 if kind != "spring" else 9
+	for k in n:
+		var key: String = names[k % names.size()]
+		var mesh: Mesh = _meshes[key]
+		var a := k * 2.399 + pos.x
+		var r := width * (0.38 + 0.3 * D.hash2(int(pos.x), int(pos.z), 300 + k))
+		var p := Vector3(pos.x + cos(a) * r, 0, pos.z + sin(a) * r)
+		var s := (0.35 + 1.1 * D.hash2(int(pos.x), int(pos.z), 330 + k)) * (0.6 if kind == "spring" else 1.0)
+		var mi := MeshInstance3D.new()
+		mi.mesh = mesh
+		var xf := _xf(p.x, p.z, s, a * 3.0, 0.1 * s, 0.8)
+		if _external.has(mesh):
+			xf = xf * _external[mesh]
+		else:
+			mi.material_override = mat
+		mi.transform = xf
+		add_child(mi)
+
+
 func _build_landmarks() -> void:
 	# target width (in tiles) for each landmark model, and how high its name floats
-	var spec := {"falls": [3.0, 5.5], "spring": [2.6, 2.2], "arch": [3.6, 5.0], "summit": [0.9, 2.4], "grove": [0.0, 9.5], "lake": [0.0, 1.5]}
+	var spec := {"falls": [4.2, 6.0], "spring": [2.6, 2.2], "arch": [3.6, 5.0], "summit": [0.9, 2.4], "grove": [0.0, 9.5], "lake": [0.0, 1.5]}
 	for lm in world.landmarks:
 		var t: Vector2i = lm.tile
 		var pos := Vector3(t.x + 0.5, top_at(t.x + 0.5, t.y + 0.5), t.y + 0.5)
@@ -1240,8 +1310,16 @@ func _build_landmarks() -> void:
 			var ext := Models.external("lm_" + str(lm.kind))
 			if ext != null:
 				mi.mesh = ext
-				mi.transform = Models.fit(ext, info[0], true)
-				mi.position += pos - Vector3(0, 0.12, 0)
+				# set into the ground and turned to face down the slope it stands on
+				var gx := height_at(pos.x + 1.5, pos.z) - height_at(pos.x - 1.5, pos.z)
+				var gz := height_at(pos.x, pos.z + 1.5) - height_at(pos.x, pos.z - 1.5)
+				var yaw := atan2(-gx, -gz) if absf(gx) + absf(gz) > 0.25 else 0.0
+				var low := pos.y
+				for k in 8:
+					low = minf(low, top_at(pos.x + cos(k * TAU / 8.0) * info[0] * 0.4, pos.z + sin(k * TAU / 8.0) * info[0] * 0.4))
+				var sink: float = {"falls": 0.7, "arch": 0.3, "spring": 0.14, "summit": 0.1}.get(lm.kind, 0.12)
+				mi.transform = Transform3D(Basis(Vector3.UP, yaw), Vector3(pos.x, lerpf(pos.y, low, 0.7) - sink, pos.z)) * Models.fit(ext, info[0], true)
+				_landmark_rocks(lm.kind, pos, info[0])
 			else:
 				mi.mesh = Models.landmark(lm.kind)
 				mi.material_override = mat

@@ -323,11 +323,55 @@ func _place_entry() -> void:
 				terrain[i] = D.T.GRASS
 
 
+## A waterfall needs something to fall from: lifts the ground upstream of the
+## tile into a rock step and scoops a plunge basin below it.
+func _raise_bluff(tile: Vector2i) -> void:
+	var c := height[ti(tile)]
+	var up := Vector2.ZERO
+	for dy in range(-3, 4):
+		for dx in range(-3, 4):
+			var q := tile + Vector2i(dx, dy)
+			if (dx != 0 or dy != 0) and inb(q.x, q.y):
+				up += Vector2(dx, dy).normalized() * (height[ti(q)] - c)
+	if up.length() < 0.01:
+		up = Vector2(0, -1)
+	up = up.normalized()
+	for dy in range(-6, 7):
+		for dx in range(-6, 7):
+			var q := tile + Vector2i(dx, dy)
+			if not inb(q.x, q.y) or q.x < 1 or q.y < 1 or q.x >= W - 1 or q.y >= H - 1:
+				continue
+			var off := Vector2(dx, dy)
+			var along := off.dot(up)
+			var fall := 1.0 - smoothstep(2.5, 6.5, off.length())
+			var lift := (2.6 * smoothstep(-0.2, 1.4, along) - 0.5 * (1.0 - smoothstep(0.0, 2.5, off.length()))) * fall
+			var j := ti(q)
+			height[j] += lift
+			if wlevel[j] != NO_WATER:
+				wlevel[j] += lift
+			elif lift > 1.2 and terrain[j] != D.T.PEAK and build[j] == D.B.NONE:
+				terrain[j] = D.T.ROCK
+				trees[j] = 0
+
+
 func _add_landmark(kind: String, tile: Vector2i) -> void:
 	var names: Array = D.LANDMARK_NAMES[kind]
 	var lm := {kind = kind, tile = tile, name = names[rng.randi() % names.size()]}
 	landmarks.append(lm)
 	landmark_at[ti(tile)] = lm
+	if kind == "falls":
+		_raise_bluff(tile)
+	elif kind == "arch" or kind == "spring":
+		# level ground for it to stand on
+		var avg := 0.0
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				avg += height[idx(tile.x + dx, tile.y + dy)] / 9.0
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				var j := idx(tile.x + dx, tile.y + dy)
+				if wlevel[j] == NO_WATER:
+					height[j] = lerpf(height[j], avg, 0.8)
 	trees[ti(tile)] = 0
 
 

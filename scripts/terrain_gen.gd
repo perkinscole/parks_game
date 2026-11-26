@@ -79,7 +79,7 @@ func generate(w: int, h: int, seed_val: int) -> void:
 			var mk := clampf((north - 0.4) * 2.0, 0.0, 1.0) * 0.8 + (mask.get_noise_2d(wx, wy) * 0.5 + 0.5) * 0.6 - 0.28
 			var m := smoothstep(0.22, 0.8, mk)
 			var r := clampf(ridge.get_noise_2d(wx, wy) * 0.5 + 0.5, 0.0, 1.0)
-			var v := 2.6 + b * 2.8 + north * 2.5 + m * (4.0 + pow(r, 1.7) * 36.0)
+			var v := 2.6 + b * 2.8 + north * 2.5 + m * (5.0 + pow(r, 1.8) * 50.0)
 			var bs := basin.get_noise_2d(x, y)
 			if bs < -0.16:
 				v -= (-0.16 - bs) * 26.0 * (1.0 - m) # lowland basins that will hold lakes
@@ -132,8 +132,8 @@ func generate(w: int, h: int, seed_val: int) -> void:
 			if r < 0:
 				continue
 			var drop := height[i] - height[r]
-			if drop > 2.4: # too steep to hold: slump toward the angle of repose
-				var mv := (drop - 2.4) * 0.3
+			if drop > 2.8: # too steep to hold: slump toward the angle of repose
+				var mv := (drop - 2.8) * 0.3
 				height[i] -= mv
 				height[r] += mv
 
@@ -144,7 +144,7 @@ func generate(w: int, h: int, seed_val: int) -> void:
 			var i := y * W + x
 			if height[i] > 7.0:
 				var avg := (height[i - 1] + height[i + 1] + height[i - W] + height[i + W]) * 0.25
-				soft[i] = lerpf(height[i], avg, 0.55)
+				soft[i] = lerpf(height[i], avg, 0.6)
 	height = soft
 
 	# flat-topped sandstone mesas, added after erosion so their rims stay sharp
@@ -238,7 +238,7 @@ func relief(x: float, y: float) -> float:
 	var mk := clampf((north - 0.4) * 2.0, 0.0, 1.0) * 0.8 + (mask.get_noise_2d(wx, wy) * 0.5 + 0.5) * 0.6 - 0.28
 	var m := smoothstep(0.22, 0.8, mk)
 	var r := clampf(ridge.get_noise_2d(wx, wy) * 0.5 + 0.5, 0.0, 1.0)
-	return maxf(2.6 + b * 2.8 + north * 2.5 + m * (4.0 + pow(r, 1.7) * 30.0), 0.8)
+	return maxf(2.6 + b * 2.8 + north * 2.5 + m * (5.0 + pow(r, 1.8) * 42.0), 0.8)
 
 
 func _push(key: float, value: int) -> void:

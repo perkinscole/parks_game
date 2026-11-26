@@ -194,14 +194,26 @@ func start_game(seed_val: int, save: Dictionary) -> void:
 	sky_mat.sun_angle_max = 12.0
 	var sky_res := Sky.new()
 	sky_res.sky_material = sky_mat
+	sky_res.process_mode = Sky.PROCESS_MODE_REALTIME
+	sky_res.radiance_size = Sky.RADIANCE_SIZE_256
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky_res
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_sky_contribution = 1.0
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+	# haze you can see the light fall through
+	env.volumetric_fog_enabled = true
+	env.volumetric_fog_density = 0.004
+	env.volumetric_fog_albedo = Color(0.9, 0.93, 1.0)
+	env.volumetric_fog_anisotropy = 0.65
+	env.volumetric_fog_length = 160.0
+	env.volumetric_fog_ambient_inject = 0.25
+	env.volumetric_fog_sky_affect = 0.0
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
 	env.tonemap_white = 2.2
 	env.adjustment_enabled = true
-	env.adjustment_contrast = 1.06
-	env.adjustment_saturation = 0.98
+	env.adjustment_contrast = 1.08
+	env.adjustment_saturation = 0.92
 	env.ssao_enabled = true
 	env.ssao_radius = 1.2
 	env.ssao_intensity = 1.6
@@ -211,7 +223,10 @@ func start_game(seed_val: int, save: Dictionary) -> void:
 	env.glow_hdr_threshold = 1.1
 	env.fog_enabled = true
 	env.fog_density = 0.0006
-	env.fog_aerial_perspective = 0.25
+	env.fog_aerial_perspective = 0.7
+	# mist pools in the valleys, so ridges rise out of it one behind another
+	env.fog_height = 3.0
+	env.fog_height_density = 0.012
 	env.fog_sky_affect = 0.0
 	we.environment = env
 	add_child(we)
@@ -248,7 +263,7 @@ func start_game(seed_val: int, save: Dictionary) -> void:
 	add_child(ghost)
 
 	cam = Camera3D.new()
-	cam.fov = 42.0
+	cam.fov = 48.0
 	cam.near = 0.3
 	cam.far = 3000.0
 	add_child(cam)
@@ -287,6 +302,8 @@ func _apply_quality(level: int) -> void:
 	vp.msaa_3d = Viewport.MSAA_2X if quality == 2 else Viewport.MSAA_DISABLED
 	vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED if quality == 2 else Viewport.SCREEN_SPACE_AA_FXAA
 	env.ssao_enabled = quality >= 1
+	env.volumetric_fog_enabled = quality >= 1
+	land.set_tree_detail([0.0, 24.0, 40.0][quality])
 	env.glow_enabled = quality >= 1
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS if quality >= 1 else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	RenderingServer.directional_shadow_atlas_set_size([2048, 4096, 8192][quality], true)
@@ -396,25 +413,29 @@ func _update_sky() -> void:
 	var hour := game.minutes / 60.0
 	var p := clampf((hour - 5.5) / 15.0, 0.0, 1.0) # 5:30 sunrise .. 20:30 sunset
 	var up := sin(p * PI) # sun height, 0 at the horizon
-	var day := smoothstep(0.0, 0.22, up)
+	var day := smoothstep(0.0, 0.1, up)
 	var glow := (1.0 - smoothstep(0.1, 0.45, up)) * smoothstep(0.0, 0.08, up)
 	var night := 1.0 - day
 	if day > 0.02:
-		sun.rotation = Vector3(deg_to_rad(-(7.0 + 44.0 * up)), deg_to_rad(lerpf(105.0, -105.0, p)), 0.0)
-		sun.light_color = Color(1.0, 0.95, 0.86).lerp(Color(1.0, 0.6, 0.34), glow)
+		sun.rotation = Vector3(deg_to_rad(-(13.0 + 40.0 * up)), deg_to_rad(lerpf(105.0, -105.0, p)), 0.0)
+		sun.light_color = Color(1.0, 0.95, 0.86).lerp(Color(1.0, 0.74, 0.5), glow)
 		sun.light_energy = (1.25 + 0.45 * glow) * day * (1.0 - 0.62 * _overcast)
 	else:
 		sun.rotation = Vector3(deg_to_rad(-48.0), deg_to_rad(40.0), 0.0)
 		sun.light_color = Color(0.55, 0.66, 1.0)
 		sun.light_energy = 0.32 * smoothstep(0.98, 1.0, night) + 0.0001
-	env.ambient_light_color = _mix(Color(0.2, 0.26, 0.45), Color(0.6, 0.5, 0.55), Color(0.5, 0.6, 0.8), day, glow)
-	env.ambient_light_energy = 0.36 - 0.04 * day
-	sky_mat.sky_top_color = _mix(Color(0.02, 0.03, 0.09), Color(0.22, 0.3, 0.55), Color(0.2, 0.42, 0.78), day, glow)
-	sky_mat.sky_horizon_color = _mix(Color(0.08, 0.11, 0.22), Color(0.98, 0.62, 0.42), Color(0.68, 0.8, 0.92), day, glow)
-	land.water_mat.set_shader_parameter("sky_col", sky_mat.sky_horizon_color.lerp(sky_mat.sky_top_color, 0.45))
-	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color
-	sky_mat.ground_bottom_color = sky_mat.sky_horizon_color.darkened(0.3)
-	env.fog_light_color = sky_mat.sky_horizon_color.lerp(Color(0.6, 0.68, 0.78), 0.4 * day)
+	# sky light, with a floor of plain fill so dawn, dusk and night stay readable
+	env.ambient_light_sky_contribution = 0.35 + 0.4 * day * (1.0 - glow)
+	env.ambient_light_color = _mix(Color(0.2, 0.26, 0.42), Color(0.72, 0.6, 0.6), Color(0.62, 0.7, 0.82), day, glow)
+	env.ambient_light_energy = lerpf(0.6, 1.0, day) + 0.35 * glow
+	var sky_top := _mix(Color(0.02, 0.03, 0.09), Color(0.22, 0.3, 0.55), Color(0.2, 0.42, 0.78), day, glow)
+	var sky_hor := _mix(Color(0.08, 0.11, 0.22), Color(0.98, 0.62, 0.42), Color(0.68, 0.8, 0.92), day, glow)
+	sky_mat.sky_top_color = sky_top
+	sky_mat.sky_horizon_color = sky_hor
+	sky_mat.ground_horizon_color = sky_hor
+	sky_mat.ground_bottom_color = sky_hor.darkened(0.5)
+	land.water_mat.set_shader_parameter("sky_col", sky_hor.lerp(sky_top, 0.45))
+	env.fog_light_color = sky_hor.lerp(Color(0.6, 0.68, 0.78), 0.4 * day)
 	land.set_night(smoothstep(0.35, 0.9, night + glow * 0.5 + _overcast * 0.25))
 	# weather: clouds, rain and snow
 	# weather is regional: show whatever is happening where the camera is looking
@@ -424,12 +445,17 @@ func _update_sky() -> void:
 	var wet: bool = wx == "rain" or wx == "storm" or wx == "snow"
 	_overcast = move_toward(_overcast, 1.0 if wet else 0.0, 0.01)
 	var grey := Color(0.5, 0.54, 0.6) * (0.35 + 0.65 * day)
-	sky_mat.sky_top_color = sky_mat.sky_top_color.lerp(grey * 0.8, _overcast)
-	sky_mat.sky_horizon_color = sky_mat.sky_horizon_color.lerp(grey, _overcast)
+	sky_mat.sky_top_color = sky_mat.sky_top_color.lerp(grey, _overcast)
+	sky_mat.sky_horizon_color = sky_mat.sky_horizon_color.lerp(grey * 1.15, _overcast)
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color
 	env.fog_light_color = env.fog_light_color.lerp(grey, _overcast)
-	env.fog_density = lerpf(0.0006, 0.005 if wx != "snow" else 0.009, _overcast) * clampf(55.0 / dist, 0.12, 1.0)
-	env.ambient_light_energy += 0.12 * _overcast
+	# haze thins as the camera pulls back, so the whole park stays clear from above
+	var clear := clampf(45.0 / dist, 0.1, 1.0)
+	# distance haze stays even from high up: far ranges fade to blue, which is what reads as scale
+	env.fog_density = lerpf(0.0032, 0.006 if wx != "snow" else 0.01, _overcast) * maxf(clear, 0.45)
+	env.fog_height_density = lerpf(0.012 + 0.02 * glow, 0.03, _overcast) * maxf(clear, 0.3)
+	env.volumetric_fog_density = lerpf(0.0035 + 0.006 * glow, 0.02, _overcast) * clear
+	env.volumetric_fog_albedo = Color(0.9, 0.93, 1.0).lerp(Color(1.0, 0.8, 0.62), glow)
 	if wx == "heat":
 		env.fog_light_color = env.fog_light_color.lerp(Color(0.9, 0.8, 0.6), 0.4)
 	rain.emitting = wx == "rain" or wx == "storm"
