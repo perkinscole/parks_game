@@ -217,15 +217,23 @@ func generate(w: int, h: int, seed_val: int) -> void:
 		# cliffs the water runs unseen through the rocks
 		if acc[i] > 170.0 and x > 0 and y > 0 and x < W - 1 and y < H - 1 and height[i] < 10.5 and drop < 1.6:
 			river[i] = 1
-			if drop > 1.3:
-				cands.append([drop * sqrt(acc[i]), Vector2i(x, y)])
+			if drop > 0.7:
+				cands.append([drop * sqrt(acc[i]), Vector2i(x, y), i])
 	for i in n:
 		if river[i] == 1:
 			level[i] = height[i] - 0.04
 			height[i] -= 0.4
 	cands.sort_custom(func(a, b): return a[0] > b[0])
 	for c in cands:
-		falls.append(c[1])
+		# a fall needs river both above and below it
+		var ci: int = c[2]
+		var fed := false
+		for k in 8:
+			var q: Vector2i = c[1] + NB[k]
+			if q.x >= 0 and q.y >= 0 and q.x < W and q.y < H and river[q.y * W + q.x] == 1 and drain[q.y * W + q.x] == ci:
+				fed = true
+		if fed and drain[ci] >= 0 and (river[drain[ci]] == 1 or level[drain[ci]] != NO_WATER):
+			falls.append(c[1])
 
 
 ## The un-eroded lie of the land at any point, including beyond the map, so

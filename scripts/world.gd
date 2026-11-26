@@ -324,44 +324,94 @@ func _place_entry() -> void:
 				terrain[i] = D.T.GRASS
 
 
-## A waterfall needs something to fall from: lifts the ground upstream of the
-## tile into a rock step and scoops a plunge basin below it.
+## A waterfall is a step in its own river. The river's fall through this
+## reach is gathered into one drop: upstream the channel is held up nearly
+## level at its highest point, downstream it is cut down nearly level at its
+## lowest, and the banks are carried up and down with it. The river still
+## runs downhill all the way, so the fall joins the water above and below.
+## Returns the upstream direction.
 func _raise_bluff(tile: Vector2i) -> Vector2:
-	var c := height[ti(tile)]
-	var up := Vector2.ZERO
-	for dy in range(-3, 4):
-		for dx in range(-3, 4):
-			var q := tile + Vector2i(dx, dy)
-			if (dx != 0 or dy != 0) and inb(q.x, q.y):
-				up += Vector2(dx, dy).normalized() * (height[ti(q)] - c)
-	# better still, follow the river itself: upstream is where its water stands higher
-	var flow := Vector2.ZERO
+	var R := 6
 	var wc := wlevel[ti(tile)]
+	var ups: Array[Vector2i] = []
+	var downs: Array[Vector2i] = []
+	var h_up := wc
+	var h_down := wc
+	var up := Vector2.ZERO
 	if wc != NO_WATER:
+		# walk the channel both ways from the lip, so other streams nearby are left alone
+		var seen := {tile: true}
+		var frontier: Array[Vector2i] = [tile]
+		while not frontier.is_empty():
+			var c: Vector2i = frontier.pop_back()
+			for dy in range(-1, 2):
+				for dx in range(-1, 2):
+					var q := c + Vector2i(dx, dy)
+					if seen.has(q) or not inb(q.x, q.y) or gen.river[ti(q)] != 1 or (q - tile).length() > R:
+						continue
+					seen[q] = true
+					frontier.append(q)
+					if wlevel[ti(q)] > wc:
+						ups.append(q)
+						h_up = maxf(h_up, wlevel[ti(q)])
+					else:
+						downs.append(q)
+						h_down = minf(h_down, wlevel[ti(q)])
+		var best := wc
+		for dy in range(-1, 2):
+			for dx in range(-1, 2):
+				var q := tile + Vector2i(dx, dy)
+				if seen.has(q) and q != tile and wlevel[ti(q)] < best:
+					best = wlevel[ti(q)]
+					up = -Vector2(dx, dy).normalized()
+	if up == Vector2.ZERO:
+		var c0 := height[ti(tile)]
 		for dy in range(-3, 4):
 			for dx in range(-3, 4):
 				var q := tile + Vector2i(dx, dy)
-				if (dx != 0 or dy != 0) and inb(q.x, q.y) and wlevel[ti(q)] != NO_WATER:
-					flow += Vector2(dx, dy).normalized() * (wlevel[ti(q)] - wc)
-	if flow.length() > 0.05:
-		up = flow
-	if up.length() < 0.01:
-		up = Vector2(0, -1)
-	up = up.normalized()
-	for dy in range(-6, 7):
-		for dx in range(-6, 7):
+				if (dx != 0 or dy != 0) and inb(q.x, q.y):
+					up += Vector2(dx, dy).normalized() * (height[ti(q)] - c0)
+		up = up.normalized() if up.length() > 0.01 else Vector2(0, -1)
+	if downs.is_empty():
+		return up
+	# make sure it is a real drop even on a gentle river
+	h_up = maxf(h_up, h_down + 3.2)
+	var shift := {} # river tile -> change in level
+	ups.append(tile)
+	for q in ups:
+		var j := ti(q)
+		var nl := h_up - (h_up - wlevel[j]) * 0.08
+		shift[q] = nl - wlevel[j]
+	for q in downs:
+		var j := ti(q)
+		var nl := h_down + (wlevel[j] - h_down) * 0.08
+		shift[q] = nl - wlevel[j]
+	# the land beside the channel moves with the nearest stretch of it
+	for dy in range(-R - 4, R + 5):
+		for dx in range(-R - 4, R + 5):
 			var q := tile + Vector2i(dx, dy)
-			if not inb(q.x, q.y) or q.x < 1 or q.y < 1 or q.x >= W - 1 or q.y >= H - 1:
+			if q.x < 1 or q.y < 1 or q.x >= W - 1 or q.y >= H - 1:
 				continue
-			var off := Vector2(dx, dy)
-			var along := off.dot(up)
-			var fall := 1.0 - smoothstep(2.5, 6.5, off.length())
-			var lift := (4.4 * smoothstep(-0.1, 1.0, along) - 0.6 * (1.0 - smoothstep(0.0, 2.5, off.length())) * (1.0 - smoothstep(-0.5, 0.5, along))) * fall
 			var j := ti(q)
-			height[j] += lift
+			if shift.has(q):
+				wlevel[j] += shift[q]
+				height[j] = wlevel[j] - 0.36
+				continue
 			if wlevel[j] != NO_WATER:
-				wlevel[j] += lift
-			elif lift > 1.2 and terrain[j] != D.T.PEAK and build[j] == D.B.NONE:
+				continue
+			var near := 99.0
+			var d_near := 0.0
+			for r: Vector2i in shift:
+				var dd := Vector2(q - r).length()
+				if dd < near:
+					near = dd
+					d_near = shift[r]
+			if near > 5.0:
+				continue
+			var edge := 1.0 - smoothstep(float(R) - 2.5, float(R) + 0.5, Vector2(dx, dy).length())
+			var lift: float = d_near * (1.0 - smoothstep(1.0, 5.0, near)) * edge
+			height[j] += lift
+			if absf(lift) > 1.0 and terrain[j] != D.T.PEAK and build[j] == D.B.NONE:
 				terrain[j] = D.T.ROCK
 				trees[j] = 0
 	return up

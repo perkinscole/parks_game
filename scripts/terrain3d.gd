@@ -58,6 +58,7 @@ var _tree_nodes: Array[MultiMeshInstance3D] = []
 var _veg: Array = []
 var _hd_nodes: Array[MultiMeshInstance3D] = []
 var _card_nodes: Array[MultiMeshInstance3D] = []
+var _shade_nodes: Array[MultiMeshInstance3D] = []
 var _tree_detail := 0.0
 var _grass_nodes: Array[MultiMeshInstance3D] = []
 var grass_mat: ShaderMaterial
@@ -157,6 +158,7 @@ func setup(w: World, f: Font) -> void:
 	var outer := MeshInstance3D.new()
 	outer.mesh = _outskirts_mesh()
 	outer.material_override = ground
+	outer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(outer)
 	_build_highway()
 
@@ -271,7 +273,7 @@ func _new_mm(key: String, parent: Node) -> MultiMesh:
 	if key == "grass":
 		mmi.material_override = grass_mat
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mmi.visibility_range_end = 62.0
+		mmi.visibility_range_end = 44.0
 		mmi.visibility_range_end_margin = 10.0
 		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		_grass_nodes.append(mmi)
@@ -280,15 +282,23 @@ func _new_mm(key: String, parent: Node) -> MultiMesh:
 		if _cards.has(mm.mesh) and _meshes.has(HD.get(key, "")):
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 			_card_nodes.append(mmi)
+			# near the camera the detailed trees are drawn, but their shadows still
+			# come from the cheap cut-outs: shadow passes would redraw every triangle
+			var shade := MultiMeshInstance3D.new()
+			shade.multimesh = mm
+			shade.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_SHADOWS_ONLY
+			shade.visible = false
+			parent.add_child(shade)
+			_shade_nodes.append(shade)
 	elif key.ends_with("_hd"):
 		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		mmi.visible = false
-		_tree_nodes.append(mmi)
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_hd_nodes.append(mmi)
 	elif key in ["flower", "bush", "reed", "rock", "rock2", "rock_red"]:
 		# small ground cover is only worth drawing up close
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mmi.visibility_range_end = 95.0 if not key.begins_with("rock") else 150.0
+		mmi.visibility_range_end = 55.0 if not key.begins_with("rock") else 85.0
 		mmi.visibility_range_end_margin = 12.0
 		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	parent.add_child(mmi)
@@ -303,9 +313,30 @@ func set_tree_detail(dist: float) -> void:
 		n.visible = dist > 0.0
 		n.visibility_range_end = dist
 		n.visibility_range_end_margin = 5.0
+	for n in _shade_nodes:
+		n.visible = dist > 0.0 and not _ghosted
+		n.visibility_range_end = dist + 5.0
 	for n in _card_nodes:
 		n.visibility_range_begin = dist
 		n.visibility_range_begin_margin = 5.0 if dist > 0.0 else 0.0
+
+
+## Developer aid: triangles per kind of scenery over the whole map.
+func print_budget() -> void:
+	var tot := {}
+	for key in _regions:
+		for name in _regions[key]:
+			var mm: MultiMesh = _regions[key][name]
+			var tris := 0
+			for s in mm.mesh.get_surface_count():
+				var arr := mm.mesh.surface_get_arrays(s)
+				tris += (arr[Mesh.ARRAY_INDEX].size() if arr[Mesh.ARRAY_INDEX] != null else arr[Mesh.ARRAY_VERTEX].size()) / 3
+			var e: Array = tot.get(name, [0, 0, tris])
+			e[0] += mm.instance_count
+			e[1] += mm.instance_count * tris
+			tot[name] = e
+	for name in tot:
+		print("budget %-12s instances %7d  tris each %5d  total %6dk" % [name, tot[name][0], tot[name][2], tot[name][1] / 1000])
 
 
 ## Grass blades are the first thing to drop on slower machines.
@@ -319,6 +350,10 @@ func set_trees_ghosted(on: bool) -> void:
 	if on == _ghosted:
 		return
 	_ghosted = on
+	for n in _hd_nodes:
+		n.transparency = 0.82 if on else 0.0
+	for n in _shade_nodes:
+		n.visible = _tree_detail > 0.0 and not on
 	for n in _tree_nodes:
 		n.transparency = 0.82 if on else 0.0
 		n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if on else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
@@ -1127,13 +1162,13 @@ func _rebuild_region(key: Vector2i) -> void:
 						if out.has("leaf_hd"):
 							out.leaf_hd[0].append(xf)
 							out.leaf_hd[1].append(Color.WHITE)
-			elif (t == D.T.ROCK or t == D.T.PEAK) and bio != D.BIOME.DESERT and h < (0.3 if t == D.T.ROCK else 0.14):
+			elif (t == D.T.ROCK or t == D.T.PEAK) and bio != D.BIOME.DESERT and h < (0.2 if t == D.T.ROCK else 0.08):
 				# boulders and scree: one big block with smaller ones fallen around it
 				var rk := "rock" if h2 < 0.5 else "rock2"
-				var big := 0.6 + h2 * 2.6 * (h / 0.3)
+				var big := 0.6 + h2 * 2.6 * (h / 0.2)
 				out[rk][0].append(_xf(x + h2, y + fmod(h * 9.0, 1.0), big, h * 40.0, 0.1 * big, 0.75 + h2 * 0.5))
 				out[rk][1].append(Color.WHITE)
-				for k in 2:
+				for k in (1 if h2 > 0.5 else 0):
 					var rk2 := "rock2" if rk == "rock" else "rock"
 					out[rk2][0].append(_xf(x + D.hash2(x, y, 20 + k), y + D.hash2(x, y, 30 + k), 0.25 + D.hash2(x, y, 40 + k) * 0.5, k * 2.3 + h * 9.0, 0.04))
 					out[rk2][1].append(Color.WHITE)
@@ -1154,7 +1189,7 @@ func _rebuild_region(key: Vector2i) -> void:
 					for k in 3:
 						out.flower[0].append(_xf(x + D.hash2(x, y, 20 + k), y + D.hash2(x, y, 30 + k), 0.14 + h * 0.16, 0.0, -0.06))
 						out.flower[1].append(bloom[int(D.hash2(x, y, 40 + k) * 4.0) % 4])
-				if h2 < 0.22:
+				if h2 < 0.13:
 					out.bush[0].append(_xf(x + h, y + h2 * 4.0, 0.5 + h * 0.6, h * 9.0))
 					out.bush[1].append(Color("3f6a34").lerp(Color("5f8a3f"), h) if season != 3 else Color("9aa39c"))
 				if h < (0.09 if bio == D.BIOME.ALPINE else 0.012):
@@ -1331,6 +1366,36 @@ func _landmark_rocks(kind: String, pos: Vector3, width: float) -> void:
 		add_child(mi)
 
 
+## Height of the water sheet at a point, as the water mesh draws it (levels
+## averaged at tile corners), or far below ground where there is no water.
+func _river_surface(x: float, z: float) -> float:
+	var tx := clampi(int(floor(x)), 0, World.W - 1)
+	var tz := clampi(int(floor(z)), 0, World.H - 1)
+	var lv: Array[float] = []
+	var low := 1e9
+	for c in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1)]:
+		var sum := 0.0
+		var cnt := 0
+		for dy in [-1, 0]:
+			for dx in [-1, 0]:
+				var ax: int = tx + c.x + dx
+				var ay: int = tz + c.y + dy
+				if World.inb(ax, ay) and world.wlevel[World.idx(ax, ay)] != World.NO_WATER:
+					sum += world.wlevel[World.idx(ax, ay)]
+					cnt += 1
+		lv.append(sum / cnt if cnt > 0 else NAN)
+		if cnt > 0:
+			low = minf(low, sum / cnt)
+	if low > 1e8:
+		return -1e6
+	for k in 4:
+		if is_nan(lv[k]):
+			lv[k] = low
+	var u := x - tx
+	var v := z - tz
+	return lerpf(lerpf(lv[0], lv[1], u), lerpf(lv[2], lv[3], u), v)
+
+
 ## A waterfall is part of the land: the river pours over the rock step that
 ## the world generator raised, as a sheet of moving water laid on the cliff.
 func _build_falls(lm: Dictionary, pos: Vector3) -> void:
@@ -1345,11 +1410,12 @@ func _build_falls(lm: Dictionary, pos: Vector3) -> void:
 	var prev_y := 1e9
 	for k in steps + 1:
 		var f := float(k) / steps
-		var along := lerpf(2.6, -2.4, f) # from above the lip to the pool
+		var along := lerpf(0.7, -1.7, f) # from the lip to the pool
 		var c := Vector2(pos.x, pos.z) + up * along
-		var wide := lerpf(0.42, 0.6, f)
-		var cy := maxf(height_at(c.x, c.y), maxf(height_at(c.x + side.x * wide, c.y + side.y * wide), height_at(c.x - side.x * wide, c.y - side.y * wide)))
-		cy = minf(cy + 0.1, prev_y) # water never runs uphill
+		var wide := lerpf(0.5, 0.62, f)
+		# ride on the river's own surface, so the sheet joins the water above and below
+		var cy := maxf(height_at(c.x, c.y) + 0.06, _river_surface(c.x, c.y) + 0.04)
+		cy = minf(cy, prev_y) # water never runs uphill
 		var steep := clampf((prev_y - cy) * 4.0, 0.0, 1.0) if k > 0 else 0.0
 		prev_y = cy
 		for sgn in [-1.0, 1.0]:
@@ -1378,7 +1444,7 @@ func _build_falls(lm: Dictionary, pos: Vector3) -> void:
 	mi.material_override = falls_mat
 	add_child(mi)
 	# spray hanging over the plunge pool
-	var foot := Vector2(pos.x, pos.z) - up * 1.3
+	var foot := Vector2(pos.x, pos.z) - up * 1.2
 	var mist := GPUParticles3D.new()
 	var pm := ParticleProcessMaterial.new()
 	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE

@@ -316,11 +316,11 @@ func _apply_quality(level: int) -> void:
 	vp.msaa_3d = Viewport.MSAA_2X if quality == 2 else Viewport.MSAA_DISABLED
 	vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED if quality == 2 else Viewport.SCREEN_SPACE_AA_FXAA
 	env.ssao_enabled = quality >= 1
-	env.volumetric_fog_enabled = quality >= 1
-	land.set_tree_detail([0.0, 24.0, 40.0][quality])
+	env.volumetric_fog_enabled = quality >= 2
+	land.set_tree_detail([0.0, 15.0, 28.0][quality])
 	env.glow_enabled = quality >= 1
-	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS if quality >= 1 else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-	RenderingServer.directional_shadow_atlas_set_size([2048, 4096, 8192][quality], true)
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS if quality >= 2 else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	RenderingServer.directional_shadow_atlas_set_size([2048, 4096, 4096][quality], true)
 	agents.detail = [0.35, 0.7, 1.0][quality]
 	land.set_grass_enabled(quality >= 1)
 	var cfg := ConfigFile.new()
@@ -711,6 +711,11 @@ func _process(delta: float) -> void:
 		_inspect_timer = 0.25
 		_update_inspector()
 
+	if _args.has("perf") and Engine.get_frames_drawn() % 20 == 19:
+		print("perf q%d  draws %d  tris %dk  objects %d" % [quality,
+			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_DRAW_CALLS_IN_FRAME),
+			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME) / 1000,
+			RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_OBJECTS_IN_FRAME)])
 	if _shot != "":
 		_shot_frames -= 1
 		if _shot_frames <= 0:
@@ -1122,6 +1127,8 @@ func _dev_hooks(args: Dictionary) -> void:
 			game.try_build(D.B.TRAIL, t, true)
 		tool = null
 		world.rebuild_nav()
+	if args.has("budget"):
+		land.print_budget()
 	if args.has("cam"): # tileX,tileY[,distance[,yawDegrees[,pitchDegrees]]]
 		var c: PackedStringArray = args.cam.split(",")
 		target = Vector3(float(c[0]), 0, float(c[1]))
