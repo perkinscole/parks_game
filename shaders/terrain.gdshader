@@ -33,8 +33,10 @@ void fragment() {
 	vec4 tile = texture(tile_tex, clamp(uv + warp, vec2(0.002), vec2(0.998)));
 	float o = max(max(-uv.x, uv.x - 1.0), max(-uv.y, uv.y - 1.0));
 	float outside = smoothstep(0.0, 0.04, o);
-	vec3 base = mix(tile.rgb, mix(vec3(0.05, 0.11, 0.05), vec3(0.13, 0.2, 0.08), n_big), outside);
-	float desert = tile.a * (1.0 - outside);
+	// beyond the edge, fade gradually from the park's own ground into wild forest
+	float far_out = smoothstep(0.0, 0.3, o + (n_big - 0.5) * 0.12);
+	vec3 base = mix(tile.rgb, mix(vec3(0.05, 0.11, 0.05), vec3(0.13, 0.2, 0.08), n_big), far_out);
+	float desert = tile.a * (1.0 - far_out);
 	base *= 0.74 + 0.5 * n_big;
 	base *= 0.84 + 0.32 * n_mid;
 	base *= 0.9 + 0.2 * n_fine;
@@ -78,7 +80,7 @@ void fragment() {
 	float cap = smoothstep(snowline, snowline + 5.0, wpos.y + (n_big - 0.5) * 9.0 + (n_mid - 0.5) * 2.5);
 	float lie = 1.0 - smoothstep(0.3, 0.58, slope + (n_fine - 0.5) * 0.12);
 	float ground_snow = snow_all * step(0.04, wpos.y) * (1.0 - road * 0.8) * (1.0 - trail * 0.55) * (1.0 - desert * 0.75);
-	float snow = max(cap, ground_snow) * lie;
+	float snow = max(cap * (1.0 - desert), ground_snow) * lie;
 	col = mix(col, vec3(0.8, 0.85, 0.92) * (0.93 + 0.1 * n_mid), snow);
 
 	ALBEDO = col;
