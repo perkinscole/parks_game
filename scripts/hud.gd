@@ -85,6 +85,7 @@ var font: Font
 var root: Control
 var current_tool = null
 var view_tile := Vector2i.ZERO
+var quality_box: OptionButton
 var panel_id := ""
 var stat := {}
 var speed_buttons: Array[Button] = []
@@ -268,6 +269,15 @@ func _build_top() -> void:
 		menu.add_child(_button(id, func(): toggle_panel(id)))
 	menu.add_child(_button("Save", func(): menu_action.emit("save"), "Save the park (it also saves by itself every morning)"))
 	menu.add_child(_button("Menu", func(): menu_action.emit("menu"), "Save and return to the main menu"))
+	menu.add_child(_button(" + ", func(): menu_action.emit("zoom_in"), "Zoom in (scroll, pinch, or the + key)"))
+	menu.add_child(_button(" - ", func(): menu_action.emit("zoom_out"), "Zoom out (scroll, pinch, or the - key)"))
+	quality_box = OptionButton.new()
+	quality_box.focus_mode = Control.FOCUS_NONE
+	quality_box.tooltip_text = "Graphics quality. Choose Fast if the game feels laggy."
+	for name in ["Graphics: Fast", "Graphics: Balanced", "Graphics: Best"]:
+		quality_box.add_item(name)
+	quality_box.item_selected.connect(func(i): menu_action.emit("quality%d" % i))
+	menu.add_child(quality_box)
 	var ov := OptionButton.new()
 	ov.focus_mode = Control.FOCUS_NONE
 	ov.tooltip_text = "Map overlay"
@@ -281,6 +291,10 @@ func _build_top() -> void:
 	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		ov.add_theme_color_override(c, INK)
 	menu.add_child(ov)
+
+
+func set_quality(level: int) -> void:
+	quality_box.select(level)
 
 
 func set_speed(s: int) -> void:

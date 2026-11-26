@@ -52,6 +52,9 @@ var _regions := {} # Vector2i -> {name: MultiMesh}
 var _mm := {}
 var _meshes := {}
 var _external := {}
+var _tree_nodes: Array[MultiMeshInstance3D] = []
+var _region_nodes := {}
+var _ghosted := false
 var _cards := {}
 var _struct_nodes := {}
 var _lights: Array[OmniLight3D] = []
@@ -165,6 +168,11 @@ func setup(w: World, f: Font) -> void:
 			for key in VEG:
 				mms[key] = _new_mm(key, holder)
 			_regions[Vector2i(rx, ry)] = mms
+			var trees_here: Array = []
+			for c in holder.get_children():
+				if c in _tree_nodes:
+					trees_here.append(c)
+			_region_nodes[Vector2i(rx, ry)] = trees_here
 			_veg_dirty[Vector2i(rx, ry)] = true
 
 	fire_light = OmniLight3D.new()
@@ -216,8 +224,47 @@ func _new_mm(key: String, parent: Node) -> MultiMesh:
 		fm.vertex_color_use_as_albedo = true
 		fm.albedo_color = Color(3.0, 1.3, 0.35)
 		mmi.material_override = fm
+	if key in ["trunk", "leaf", "conifer", "conifer2"]:
+		_tree_nodes.append(mmi)
+	elif key in ["flower", "bush", "reed", "rock"]:
+		# small ground cover is only worth drawing up close
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.visibility_range_end = 95.0 if key != "rock" else 150.0
+		mmi.visibility_range_end_margin = 12.0
+		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	parent.add_child(mmi)
 	return mm
+
+
+## Makes the forest see-through (while building) so the ground is visible.
+func set_trees_ghosted(on: bool) -> void:
+	if on == _ghosted:
+		return
+	_ghosted = on
+	for n in _tree_nodes:
+		n.transparency = 0.82 if on else 0.0
+		n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if on else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+
+
+## Level of detail: only forest near the view casts shadows.
+func update_lod(focus: Vector3, shadow_range: float) -> void:
+	if _ghosted:
+		return
+	for key: Vector2i in _region_nodes:
+		var c := Vector3((key.x + 0.5) * REG, focus.y, (key.y + 0.5) * REG)
+		var near: bool = c.distance_to(focus) < shadow_range + REG
+		for n: MultiMeshInstance3D in _region_nodes[key]:
+			n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if near else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+
+
+## True if the tile touches a road, parking lot or building (trees keep back from these).
+func _beside_development(x: int, y: int) -> bool:
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			var b := _b(x + dx, y + dy)
+			if b != D.B.NONE and b != D.B.TRAIL:
+				return true
+	return false
 
 
 # ------------------------------------------------------------------- heights
@@ -387,7 +434,10 @@ func _on_changed(rect: Rect2i) -> void:
 				_tile_dirty = true
 				_seen_build[i] = world.build[i]
 				_seen_trees[i] = world.trees[i]
-				_veg_dirty[Vector2i(x / REG, y / REG)] = true
+				for oy in [-1, 0, 1]:
+					for ox in [-1, 0, 1]:
+						var rk := Vector2i(clampi(x + ox, 0, World.W - 1) / REG, clampi(y + oy, 0, World.H - 1) / REG)
+						_veg_dirty[rk] = true
 				for dy in range(-1, 2):
 					for dx in range(-1, 2):
 						if World.inb(x + dx, y + dy):
@@ -888,9 +938,12 @@ func _rebuild_region(key: Vector2i) -> void:
 			var h2 := D.hash2(x, y, 7)
 			var kind := world.trees[i]
 			if kind > 0:
-				var count := 2 if t == D.T.FOREST else 1
-				if t == D.T.FOREST and h < 0.45:
-					count = 3
+				# forests are open enough to see the ground, and keep back from roads and buildings
+				if _beside_development(x, y):
+					continue
+				var count := 1
+				if t == D.T.FOREST and h < 0.5:
+					count = 2
 				# supplied tree models are heavier than the built-in ones: plant fewer, larger trees
 				var heavy: bool = _external.has(_meshes["conifer" if kind == 2 else "leaf"])
 				var is_card: bool = _cards.has(_meshes["conifer" if kind == 2 else "leaf"])
@@ -900,7 +953,7 @@ func _rebuild_region(key: Vector2i) -> void:
 					var hh := D.hash2(x, y, 8 + k)
 					var px := x + 0.1 + D.hash2(x, y, 50 + k) * 0.8
 					var pz := y + 0.1 + D.hash2(x, y, 60 + k) * 0.8
-					var s := (1.55 if heavy else 1.3) + hh * 1.0
+					var s := (1.45 if heavy else 1.15) + hh * 0.85
 					if bio == D.BIOME.ALPINE: s = 0.6 + hh * 0.6
 					elif bio == D.BIOME.DESERT: s = 0.55 + hh * 0.3
 					var xf := _xf(px, pz, s, hh * TAU, 0.08, 0.9 + D.hash2(x, y, 70 + k) * 0.35)

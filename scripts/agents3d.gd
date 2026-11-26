@@ -30,6 +30,8 @@ var _ring: MeshInstance3D
 var _count := {}
 var _car_keys: Array[String] = []
 var _car_fit := {}
+var cam_pos := Vector3.ZERO # set by the camera each frame, for level of detail
+var detail := 1.0 # graphics quality multiplier for LOD distances
 var _walk := {} # character name -> {frames, fit}
 var _visitor_models: Array[String] = []
 # real-world sizes (in tiles of about 8 m, nudged up so animals stay findable) and the turn that points each supplied model's head along +X
@@ -120,7 +122,12 @@ func _yaw_z(d: Vector2) -> float:
 ## `stride` is the walk-cycle phase; pass a negative value to stand still.
 func _person(p: Vector2, facing: Vector2, shirt: Color, skin: Color, s: float, stride: float, pack: bool, hat: String = "", model: String = "") -> void:
 	var walking := stride >= 0.0
-	if _walk.has(model):
+	var gp := land.ground_pos(p)
+	var d2 := gp.distance_squared_to(cam_pos)
+	if d2 > 130.0 * 130.0 * detail:
+		return # too far away to see
+	# detailed walking models up close, simple figures farther off
+	if _walk.has(model) and d2 < 34.0 * 34.0 * detail:
 		var w: Dictionary = _walk[model]
 		var n: int = w.frames
 		var frame := int(fposmod(stride * 0.5, TAU) / TAU * n) % n if walking else 0
@@ -197,7 +204,12 @@ func _car_xf(p: Vector2, d: Vector2, s: float) -> Transform3D:
 
 func _car(gr, xf: Transform3D) -> void:
 	var key: String = _car_keys[gr.id % _car_keys.size()]
-	if _car_fit.has(key):
+	var d2 := xf.origin.distance_squared_to(cam_pos)
+	if d2 > 260.0 * 260.0 * detail:
+		return
+	if _car_fit.has(key) and d2 > 75.0 * 75.0 * detail:
+		_put("car", xf, gr.car_color)
+	elif _car_fit.has(key):
 		_put(key, xf * _car_fit[key], Color.WHITE)
 	else:
 		_put(key, xf, gr.car_color)
@@ -288,7 +300,7 @@ func _animals(delta: float) -> void:
 			rig = _make_rig(id)
 			rig.last = a.pos
 			_rigs[a] = rig
-		rig.node.visible = not a.hidden
+		rig.node.visible = not a.hidden and land.ground_pos(a.pos).distance_squared_to(cam_pos) < 190.0 * 190.0 * detail
 		if a.hidden:
 			continue
 		var pos := land.ground_pos(a.pos)

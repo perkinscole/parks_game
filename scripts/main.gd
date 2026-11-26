@@ -16,6 +16,11 @@ var sky_mat: ProceduralSkyMaterial
 var rain: GPUParticles3D
 var snow: GPUParticles3D
 var _overcast := 0.0
+var zoom_goal := 26.0
+var quality := 1
+var _lod_timer := 0.0
+var _last_mouse := Vector2(-1, -1)
+var _last_cam := Transform3D()
 var _args := {}
 var menu: CanvasLayer
 var menu_status: Label
@@ -262,17 +267,49 @@ func start_game(seed_val: int, save: Dictionary) -> void:
 	hud.overlay_selected.connect(_set_overlay)
 	hud.jump_to.connect(func(t): target = Vector3(t.x + 0.5, 0, t.y + 0.5))
 	hud.menu_action.connect(_on_menu_action)
+	zoom_goal = dist
+	_apply_quality(_load_quality())
+	hud.set_quality(quality)
 	if save.is_empty():
 		game.say("Welcome, Superintendent! This wild land is yours to protect and share. The highway passes the south edge: build your park road north from the glowing marker.", "good")
 	else:
 		game.say("Welcome back. The park reopens this morning.", "good")
-	game.say("Camera: drag to move, right-drag to orbit, scroll to zoom (or WASD, Q/E). Click anything to inspect it.", "info")
+	game.say("Camera: drag to move, right-drag to orbit, scroll or pinch to zoom (or WASD, Q/E, +/-). Trees turn see-through while you build; hold T to see through them any time.", "info")
 
 	_dev_hooks(args)
 
 
+## Graphics presets: 0 = performance, 1 = balanced, 2 = quality.
+func _apply_quality(level: int) -> void:
+	quality = clampi(level, 0, 2)
+	var vp := get_viewport()
+	vp.scaling_3d_scale = [0.6, 0.8, 1.0][quality]
+	vp.msaa_3d = Viewport.MSAA_2X if quality == 2 else Viewport.MSAA_DISABLED
+	vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED if quality == 2 else Viewport.SCREEN_SPACE_AA_FXAA
+	env.ssao_enabled = quality == 2
+	env.glow_enabled = quality >= 1
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS if quality >= 1 else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	RenderingServer.directional_shadow_atlas_set_size([2048, 4096, 8192][quality], true)
+	agents.detail = [0.35, 0.7, 1.0][quality]
+	var cfg := ConfigFile.new()
+	cfg.set_value("graphics", "quality", quality)
+	cfg.save("user://wildlands_settings.cfg")
+
+
+func _load_quality() -> int:
+	var cfg := ConfigFile.new()
+	if cfg.load("user://wildlands_settings.cfg") == OK:
+		return int(cfg.get_value("graphics", "quality", 1))
+	return 1
+
+
 func _on_menu_action(what: String) -> void:
 	match what:
+		"zoom_in": zoom_goal /= 1.35
+		"zoom_out": zoom_goal *= 1.35
+		"quality0": _apply_quality(0)
+		"quality1": _apply_quality(1)
+		"quality2": _apply_quality(2)
 		"save":
 			game.say("Game saved." if game.save_game() else "Could not write the save file.", "good")
 		"menu":
@@ -446,12 +483,19 @@ func _update_hover() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if game == null:
 		return
+	# trackpads: pinch to zoom, two-finger scroll to zoom as well
+	if event is InputEventMagnifyGesture:
+		zoom_goal /= event.factor
+		return
+	if event is InputEventPanGesture:
+		zoom_goal *= 1.0 + event.delta.y * 0.03
+		return
 	if event is InputEventMouseButton:
 		match event.button_index:
 			MOUSE_BUTTON_WHEEL_UP:
-				if event.pressed: dist /= 1.1
+				if event.pressed: zoom_goal /= 1.12
 			MOUSE_BUTTON_WHEEL_DOWN:
-				if event.pressed: dist *= 1.1
+				if event.pressed: zoom_goal *= 1.12
 			MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE:
 				if event.pressed:
 					orbiting = true
@@ -473,6 +517,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_1: hud.set_speed(1)
 			KEY_2: hud.set_speed(2)
 			KEY_3: hud.set_speed(4)
+			KEY_EQUAL, KEY_PLUS, KEY_KP_ADD: zoom_goal /= 1.3
+			KEY_MINUS, KEY_KP_SUBTRACT: zoom_goal *= 1.3
 			KEY_ESCAPE:
 				dragging = false
 				hud.select_tool(null)
@@ -524,8 +570,24 @@ func _process(delta: float) -> void:
 		_pan(mv * delta * 520.0)
 	if Input.is_key_pressed(KEY_Q): yaw -= delta * 1.4
 	if Input.is_key_pressed(KEY_E): yaw += delta * 1.4
+	zoom_goal = clampf(zoom_goal, 2.5, 320.0)
+	dist = lerpf(dist, zoom_goal, clampf(delta * 10.0, 0.0, 1.0))
 	_update_camera()
-	_update_hover()
+	# only re-pick the ground when the view or the mouse has actually moved
+	var mouse := get_viewport().get_mouse_position()
+	if mouse != _last_mouse or cam.global_transform != _last_cam:
+		_last_mouse = mouse
+		_last_cam = cam.global_transform
+		_update_hover()
+	# level of detail: shadows only reach as far as is useful at this zoom
+	var reach: float = clampf(dist * 2.2 + 30.0, 50.0, [110.0, 180.0, 260.0][quality])
+	sun.directional_shadow_max_distance = reach
+	agents.cam_pos = cam.global_position
+	_lod_timer -= delta
+	if _lod_timer <= 0.0:
+		_lod_timer = 0.4
+		land.update_lod(target, reach)
+	land.set_trees_ghosted(tool != null or Input.is_key_pressed(KEY_T))
 
 	_update_sky()
 
@@ -851,6 +913,7 @@ func _dev_hooks(args: Dictionary) -> void:
 				dist = float(args.get("dist", "3.0"))
 				pitch = 0.6
 				break
+	zoom_goal = dist
 	if args.has("panel"):
 		hud.toggle_panel(args.panel)
 	if args.has("overlay"):
