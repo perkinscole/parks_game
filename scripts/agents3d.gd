@@ -6,6 +6,9 @@ extends Node3D
 
 const MAX_PEOPLE := 1600
 const MAX_CARS := 500
+# rough real-world proportions, nudged up a little so animals stay findable
+const SIZES := {"elk": 0.85, "bear": 0.7, "wolf": 0.65, "fox": 0.6, "goat": 0.7, "bighorn": 0.7, "beaver": 0.6,
+	"trout": 0.5, "salamander": 0.55, "eagle": 0.75, "heron": 0.7, "pika": 0.6}
 
 class Rig:
 	var node: Node3D
@@ -51,8 +54,8 @@ func setup(g: Game, terrain: Terrain3D) -> void:
 		_mm[key] = mm
 	_ring = MeshInstance3D.new()
 	var torus := TorusMesh.new()
-	torus.inner_radius = 0.3
-	torus.outer_radius = 0.36
+	torus.inner_radius = 0.34
+	torus.outer_radius = 0.42
 	torus.rings = 20
 	torus.ring_segments = 4
 	_ring.mesh = torus
@@ -86,7 +89,7 @@ func _person(p: Vector2, facing: Vector2, shirt: Color, skin: Color, s: float, s
 	var walking := stride >= 0.0
 	var swing := sin(stride) * 0.75 if walking else 0.0
 	var bob := absf(cos(stride)) * 0.025 if walking else 0.0
-	var pos := land.ground(p) + Vector3(0, bob, 0)
+	var pos := land.ground_pos(p) + Vector3(0, bob, 0)
 	var xf := Transform3D(Basis(Vector3.UP, _yaw_z(facing)).scaled(Vector3(s, s, s)), pos)
 	_put("body", xf, shirt)
 	_put("head", xf, skin)
@@ -129,7 +132,7 @@ func _process(delta: float) -> void:
 			facing = Paths.dir(s.pts, s.dist)
 		elif s.state == Staffing.S.WORKING:
 			facing = Vector2(cos(t * 3.0), sin(t * 3.0))
-		_person(s.pos, facing, shirt, Color("e9b98f"), 1.2, (t * 11.0 + s.pos.x) if moving else -1.0, false, role)
+		_person(s.pos, facing, shirt, Color("e9b98f"), 0.78, (t * 11.0 + s.pos.x) if moving else -1.0, false, role)
 	for key: String in _mm:
 		_mm[key].visible_instance_count = _count.get(key, 0)
 	_animals(delta)
@@ -139,8 +142,8 @@ func _process(delta: float) -> void:
 
 func _car_xf(p: Vector2, d: Vector2, s: float) -> Transform3D:
 	# pitch the car to follow the slope it is driving on
-	var here := land.ground(p)
-	var ahead := land.ground(p + d * 8.0)
+	var here := land.ground_pos(p)
+	var ahead := land.ground_pos(p + d * 8.0)
 	var fwd := (ahead - here)
 	if fwd.length_squared() < 0.00001:
 		fwd = Vector3(d.x, 0, d.y)
@@ -160,7 +163,7 @@ func _group(gr) -> void:
 		_put("car", _car_xf(p, d, 1.0), gr.car_color)
 		return
 	var cp := World.center(gr.lot) + Vector2(-8.0 + gr.slot * 16.0, 0)
-	_put("car", _car_xf(cp, Vector2(0, -1), 0.92), gr.car_color)
+	_put("car", _car_xf(cp, Vector2(0, -1), 1.0), gr.car_color)
 	var walking := state == Visitors.S.WALK
 	var base := World.center(gr.cur)
 	var pack: bool = gr.vt.id == "hiker" or gr.vt.id == "climber" or gr.vt.id == "camper"
@@ -170,15 +173,15 @@ func _group(gr) -> void:
 		var facing := Vector2(0, 1)
 		var stride := -1.0
 		if walking:
-			var d: float = maxf(0.0, gr.dist - k * 9.0)
+			var d: float = maxf(0.0, gr.dist - k * 6.0)
 			facing = gr.dir_at(d)
-			p = gr.pos_at(d) + Vector2(-facing.y, facing.x) * ((k % 2) * 2.0 - 1.0) * 2.4
+			p = gr.pos_at(d) + Vector2(-facing.y, facing.x) * ((k % 2) * 2.0 - 1.0) * 1.6
 			stride = t * 11.0 + gr.id + k * 1.7
 		else:
 			var a: float = gr.id * 1.3 + k * TAU / maxf(1.0, gr.n)
-			p = base + Vector2(cos(a) * 8.0, sin(a) * 8.0)
+			p = base + Vector2(cos(a) * 6.0, sin(a) * 6.0)
 			facing = Vector2(-cos(a), -sin(a))
-		_person(p, facing, look.shirt, look.skin, 0.75 if look.small else 1.0, stride, pack and not look.small)
+		_person(p, facing, look.shirt, look.skin, 0.5 if look.small else 0.7, stride, pack and not look.small)
 
 
 func _make_rig(id: String) -> Rig:
@@ -225,18 +228,18 @@ func _animals(delta: float) -> void:
 		rig.node.visible = not a.hidden
 		if a.hidden:
 			continue
-		var pos := land.ground(a.pos)
-		var scale_f := 1.25
+		var pos := land.ground_pos(a.pos)
+		var scale_f: float = SIZES.get(id, 0.7)
+		var wl := land.water_at(pos.x, pos.z)
 		match id:
 			"eagle":
-				pos.y = maxf(pos.y, 0.0) + 3.6 + sin(a.phase * 0.9) * 0.3
-				scale_f = 1.7
+				pos.y = maxf(pos.y, wl) + 5.0 + sin(a.phase * 0.9) * 0.4
 			"trout":
-				pos.y = -0.09 + sin(a.phase * 2.0) * 0.01
-			"beaver", "salamander":
-				pos.y = maxf(pos.y, -0.02)
+				pos.y = wl - 0.09 + sin(a.phase * 2.0) * 0.01
+			"beaver", "salamander", "heron":
+				pos.y = maxf(pos.y, wl - 0.02)
 			_:
-				pos.y = maxf(pos.y, 0.0)
+				pos.y = maxf(pos.y, wl)
 		var mv := a.pos - rig.last
 		if mv.length_squared() > 0.0004:
 			rig.yaw = lerp_angle(rig.yaw, atan2(-mv.y, mv.x), clampf(delta * 8.0, 0.0, 1.0))
@@ -293,7 +296,7 @@ func selected_pos():
 		if selected.state == Visitors.S.GONE:
 			selected = null
 			return null
-		return land.ground(group_pos(selected))
+		return land.ground_pos(group_pos(selected))
 	if selected is Ecology.Animal:
 		if not _rigs.has(selected) or selected.hidden:
 			selected = null
@@ -303,7 +306,7 @@ func selected_pos():
 		if not game.staffing.staff.has(selected):
 			selected = null
 			return null
-		return land.ground(selected.pos)
+		return land.ground_pos(selected.pos)
 	return null
 
 
@@ -322,15 +325,15 @@ func pick(cam: Camera3D, screen: Vector2):
 	var bd := 26.0 * 26.0
 	var cands: Array = []
 	for s in game.staffing.staff:
-		cands.append([s, land.ground(s.pos)])
+		cands.append([s, land.ground_pos(s.pos)])
 	for gr in game.visitors.groups:
 		if gr.state != Visitors.S.GONE:
-			cands.append([gr, land.ground(group_pos(gr))])
+			cands.append([gr, land.ground_pos(group_pos(gr))])
 	for a in _rigs:
 		if not a.hidden:
 			cands.append([a, _rigs[a].node.position])
 	for c in cands:
-		var wp: Vector3 = c[1] + Vector3(0, 0.15, 0)
+		var wp: Vector3 = c[1] + Vector3(0, 0.1, 0)
 		if cam.is_position_behind(wp):
 			continue
 		var d := cam.unproject_position(wp).distance_squared_to(screen)

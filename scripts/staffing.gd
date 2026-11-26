@@ -142,7 +142,7 @@ func maybe_incident(gr, t: Vector2i) -> void:
 	elif w.is_water(ter): p *= 2.0
 	if w.build[i] != D.B.TRAIL: p *= 0.3
 	if g.has_tech("trails"): p *= 0.6
-	p *= float(D.WEATHER[g.weather].risk)
+	p *= float(D.WEATHER[g.weather_at(t)].risk)
 	var kind := "injury"
 	if gr.walked > 22 and rng.randf() < 0.45:
 		kind = "lost"

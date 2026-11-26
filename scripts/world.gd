@@ -28,9 +28,14 @@ var fire_tiles := {}
 var bin_cover := PackedByteArray()
 var sign_cover := PackedByteArray()
 var rest_cover := PackedByteArray()
+const NO_WATER := -999.0
+var biome := PackedByteArray() # D.BIOME per tile
+var height := PackedFloat32Array() # ground height per tile, world units
+var wlevel := PackedFloat32Array() # water surface height per tile, NO_WATER if dry
 var landmark_at := {} # tile idx -> landmark dict
 
 var pristine_total := 1.0
+var lake_size := 0
 var structures := {}
 var next_sid := 1
 var landmarks: Array = []
@@ -105,49 +110,90 @@ func generate(seed_val: int) -> void:
 	sid.resize(n)
 	sid.fill(0)
 
-	var n1 := noise
+	var n1 := noise # only used for scenery beyond the map edge
 	n1.seed = seed_val
 	n1.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	n1.frequency = 0.022
+	n1.frequency = 0.0135
 	n1.fractal_octaves = 4
 	var n2 := FastNoiseLite.new()
 	n2.seed = seed_val + 77
 	n2.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
-	n2.frequency = 0.04
+	n2.frequency = 0.028
 	n2.fractal_octaves = 3
+
+	# shape the land first (see terrain_gen.gd), then decide what grows where
+	var tg := TerrainGen.new()
+	tg.generate(W, H, seed_val)
+	height = tg.height
+	wlevel = tg.level
+	biome.resize(n)
 	var moist := PackedFloat32Array()
 	moist.resize(n)
 	for y in H:
 		for x in W:
-			var v := n1.get_noise_2d(x, y) * 0.5 + 0.5
-			var north := 1.0 - float(y) / H
-			var e := v * 0.72 + north * 0.34 - 0.03
-			elev[idx(x, y)] = e
-			moist[idx(x, y)] = n2.get_noise_2d(x, y) * 0.5 + 0.5
+			var i := idx(x, y)
+			var hgt := height[i]
+			var m := n2.get_noise_2d(x, y) * 0.5 + 0.5
+			moist[i] = m
+			elev[i] = clampf(0.31 + hgt / 28.0, 0.0, 1.0)
+			var slope := 0.0
+			for d in DIRS:
+				if inb(x + d.x, y + d.y):
+					slope = maxf(slope, absf(hgt - height[idx(x + d.x, y + d.y)]))
+			var desert := tg.dry[i] > 0.78
+			var bio := D.BIOME.FOREST if m > 0.46 else D.BIOME.VALLEY
 			var t := D.T.GRASS
-			if e < 0.25: t = D.T.DEEP
-			elif e < 0.31: t = D.T.WATER
-			elif e > 0.70: t = D.T.PEAK
-			elif e > 0.62: t = D.T.ROCK
+			if wlevel[i] != NO_WATER:
+				t = D.T.DEEP if wlevel[i] - hgt > 1.7 else D.T.WATER
+				if desert: bio = D.BIOME.DESERT
+			elif desert:
+				bio = D.BIOME.DESERT
+				if tg.mesa[i] == 1 or slope > 1.3: t = D.T.ROCK
+				elif m > 0.56: t = D.T.GRASS
+				else: t = D.T.SAND
+			elif hgt > 23.0 or (hgt > 15.0 and slope > 2.6): t = D.T.PEAK
+			elif slope > 1.5 or hgt > 17.0: t = D.T.ROCK
+			elif m > 0.46: t = D.T.FOREST
+			elif m < 0.32: t = D.T.MEADOW
+			if not desert and (hgt > 12.0 or t == D.T.PEAK or (t == D.T.ROCK and tg.mountain[i] > 0.35)):
+				bio = D.BIOME.ALPINE
+				if t == D.T.FOREST and m < 0.62: t = D.T.MEADOW
+				elif t == D.T.GRASS: t = D.T.MEADOW
+			terrain[i] = t
+			biome[i] = bio
+	# marshy wetlands on the flat ground beside lowland lakes
+	for y in H:
+		for x in W:
+			var i := idx(x, y)
+			if biome[i] == D.BIOME.DESERT or biome[i] == D.BIOME.ALPINE or is_water(terrain[i]) or terrain[i] == D.T.ROCK or moist[i] < 0.4:
+				continue
+			var lake := NO_WATER
+			for dy in range(-2, 3):
+				for dx in range(-2, 3):
+					if inb(x + dx, y + dy):
+						var j := idx(x + dx, y + dy)
+						if wlevel[j] != NO_WATER and tg.river[j] == 0:
+							lake = maxf(lake, wlevel[j])
+			if lake == NO_WATER or height[i] - lake > 0.6 or moist[i] < 0.5:
+				continue
+			biome[i] = D.BIOME.WETLAND
+			var hsh := D.hash2(x, y, 14)
+			if hsh < 0.3:
+				terrain[i] = D.T.WATER
+				wlevel[i] = lake
+				height[i] = lake - 0.3
 			else:
-				var m := moist[idx(x, y)]
-				if m > 0.52: t = D.T.FOREST
-				elif m < 0.36: t = D.T.MEADOW
-			terrain[idx(x, y)] = t
-
-	var falls: Array[Vector2i] = []
-	for r in 3:
-		var f := _carve_river()
-		if f.x >= 0:
-			falls.append(f)
+				terrain[i] = D.T.GRASS if hsh < 0.85 else D.T.SAND
+				height[i] = lake + 0.14
+	var falls: Array[Vector2i] = tg.falls
 
 	# sandy shores
 	for y in H:
 		for x in W:
 			var i := idx(x, y)
 			var t := terrain[i]
-			if t == D.T.GRASS or t == D.T.MEADOW or t == D.T.FOREST:
-				if _near_terrain(x, y, 1, [D.T.DEEP, D.T.WATER]) and D.hash2(x, y, 3) < 0.55:
+			if (t == D.T.GRASS or t == D.T.MEADOW or t == D.T.FOREST) and biome[i] != D.BIOME.WETLAND:
+				if _near_terrain(x, y, 1, [D.T.DEEP, D.T.WATER]) and D.hash2(x, y, 3) < 0.3:
 					terrain[i] = D.T.SAND
 
 	_place_entry()
@@ -157,14 +203,23 @@ func generate(seed_val: int) -> void:
 			var i := idx(x, y)
 			var h := D.hash2(x, y, 1)
 			var conifer := elev[i] > 0.45 or D.hash2(x, y, 2) < 0.6
+			var bio := biome[i]
 			match terrain[i]:
 				D.T.FOREST: trees[i] = 2 if conifer else 1
 				D.T.GRASS:
-					if h < 0.1: trees[i] = 2 if conifer else 1
+					if bio == D.BIOME.DESERT:
+						if h < 0.03: trees[i] = 1 # the odd juniper
+					elif bio == D.BIOME.VALLEY:
+						# aspen groves in the open valley
+						if n2.get_noise_2d(x * 3.0 + 90.0, y * 3.0) > 0.28 and h < 0.7: trees[i] = 1
+						elif h < 0.04: trees[i] = 2
+					elif bio == D.BIOME.WETLAND:
+						if h < 0.06: trees[i] = 1
+					elif h < 0.1: trees[i] = 2 if conifer else 1
 				D.T.MEADOW:
-					if h < 0.03: trees[i] = 1
+					if h < (0.07 if bio == D.BIOME.ALPINE else 0.03): trees[i] = 2 if bio == D.BIOME.ALPINE else 1
 				D.T.ROCK:
-					if h < 0.12: trees[i] = 2
+					if h < 0.1 and bio != D.BIOME.DESERT: trees[i] = 2
 	for t in [entry, entry + Vector2i(0, -1), entry + Vector2i(0, -2)]:
 		trees[ti(t)] = 0
 		build[ti(t)] = D.B.ROAD
@@ -186,66 +241,29 @@ func _near_terrain(x: int, y: int, r: int, kinds: Array) -> bool:
 	return false
 
 
-func _carve_river() -> Vector2i:
-	var start := Vector2i(-1, -1)
-	for attempt in 200:
-		var c := Vector2i(rng.randi_range(6, W - 7), rng.randi_range(2, H / 3))
-		if terrain[ti(c)] == D.T.ROCK:
-			start = c
-			break
-	if start.x < 0:
-		return start
-	var falls := Vector2i(-1, -1)
-	var cur := start
-	var visited := {}
-	for step in 220:
-		visited[cur] = true
-		var i := ti(cur)
-		var before := terrain[i]
-		if before == D.T.DEEP or (before == D.T.WATER and step > 3):
-			break
-		terrain[i] = D.T.WATER
-		var best := Vector2i(-1, -1)
-		var best_v := 99.0
-		for d in DIRS:
-			var nb := cur + d
-			if not inb(nb.x, nb.y) or visited.has(nb):
-				continue
-			var v := elev[ti(nb)] + rng.randf() * 0.035 - (0.012 if d.y > 0 else 0.0)
-			if terrain[ti(nb)] == D.T.PEAK:
-				v += 0.5
-			if v < best_v:
-				best_v = v
-				best = nb
-		if best.x < 0:
-			break
-		if falls.x < 0 and before == D.T.ROCK and terrain[ti(best)] != D.T.ROCK and terrain[ti(best)] != D.T.PEAK and step > 1:
-			falls = cur
-		cur = best
-		if cur.x <= 0 or cur.y <= 0 or cur.x >= W - 1 or cur.y >= H - 1:
-			terrain[ti(cur)] = D.T.WATER
-			break
-	return falls
-
-
 func _place_entry() -> void:
+	# the highway meets the park where there is open, buildable country
 	var best_x := W / 2
 	var best_score := -999.0
-	for x in range(8, W - 8):
+	for x in range(14, W - 14):
 		var ok := 0.0
-		for y in range(H - 6, H):
-			for dx in range(-2, 3):
-				var t := terrain[idx(x + dx, y)]
-				if t == D.T.GRASS or t == D.T.MEADOW or t == D.T.FOREST or t == D.T.SAND:
+		for y in range(H - 18, H):
+			for dx in range(-8, 9):
+				var i := idx(x + dx, y)
+				var t := terrain[i]
+				if (t == D.T.GRASS or t == D.T.MEADOW or t == D.T.FOREST or t == D.T.SAND) and biome[i] != D.BIOME.WETLAND:
 					ok += 1.0
-		ok -= abs(x - W / 2) * 0.15
+		ok -= abs(x - W / 2) * 0.4
 		if ok > best_score:
 			best_score = ok
 			best_x = x
 	entry = Vector2i(best_x, H - 1)
-	for y in range(H - 4, H):
+	for y in range(H - 5, H):
 		for dx in range(-1, 2):
 			var i := idx(best_x + dx, y)
+			if wlevel[i] != NO_WATER:
+				height[i] = wlevel[i] + 0.3
+				wlevel[i] = NO_WATER
 			if is_water(terrain[i]) or terrain[i] == D.T.ROCK or terrain[i] == D.T.PEAK:
 				terrain[i] = D.T.GRASS
 
@@ -272,13 +290,13 @@ func _place_landmarks(falls: Array[Vector2i]) -> void:
 	var best_e := 0.0
 	for y in range(2, H - 2):
 		for x in range(3, W - 3):
-			if terrain[idx(x, y)] == D.T.PEAK and elev[idx(x, y)] > best_e:
-				best_e = elev[idx(x, y)]
+			if terrain[idx(x, y)] == D.T.PEAK and height[idx(x, y)] > best_e:
+				best_e = height[idx(x, y)]
 				best = Vector2i(x, y)
 	if best.x >= 0:
 		_add_landmark("summit", best)
 	for f in falls:
-		if _far_from_landmarks(f, 10):
+		if _far_from_landmarks(f, 10) and f.x > 4 and f.y > 4 and f.x < W - 5 and f.y < H - 5:
 			_add_landmark("falls", f)
 			break
 	# lake: largest body of water
@@ -302,6 +320,7 @@ func _place_landmarks(falls: Array[Vector2i]) -> void:
 			if body.size() > biggest.size():
 				biggest = body
 	if biggest.size() > 12:
+		lake_size = biggest.size()
 		var c := Vector2.ZERO
 		for b in biggest:
 			c += Vector2(b)
@@ -332,6 +351,12 @@ func _place_landmarks(falls: Array[Vector2i]) -> void:
 			gbest = t
 	if gbest.x >= 0:
 		_add_landmark("grove", gbest)
+	for attempt in 600:
+		var t := Vector2i(rng.randi_range(5, W - 6), rng.randi_range(5, H - 6))
+		if biome[ti(t)] == D.BIOME.DESERT and terrain[ti(t)] == D.T.SAND and _far_from_landmarks(t, 14) \
+				and _near_terrain(t.x, t.y, 2, [D.T.ROCK]):
+			_add_landmark("arch", t)
+			break
 	for attempt in 400:
 		var t := Vector2i(rng.randi_range(5, W - 6), rng.randi_range(5, H - 10))
 		var tt := terrain[ti(t)]
@@ -343,7 +368,7 @@ func _place_landmarks(falls: Array[Vector2i]) -> void:
 func _place_orchids() -> void:
 	var placed := 0
 	for attempt in 4000:
-		if placed >= 8:
+		if placed >= 16:
 			break
 		var t := Vector2i(rng.randi_range(3, W - 4), rng.randi_range(3, H - 8))
 		var i := ti(t)

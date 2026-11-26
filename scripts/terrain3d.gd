@@ -1,47 +1,62 @@
 class_name Terrain3D
 extends Node3D
-## The 3D landscape: a smooth, finely tessellated terrain with real relief,
-## water, roads and trails draped over it, forests, buildings and landmarks,
-## plus unplayable terrain that carries on to the horizon.
-## One tile = 1 world unit. Tile (x, y) spans x..x+1 on X and y..y+1 on Z.
+## The 3D landscape. A smooth terrain mesh shaded by shaders/terrain.gdshader
+## (biome colours, rock, snow, and trails/roads blended into the ground from
+## a painted mask), water, biome vegetation, buildings, landmarks, and
+## scenery that carries on to the horizon.
+## One tile = 1 world unit (about 8 m). Tile (x, y) spans x..x+1 on X, y..y+1 on Z.
 
-const CH := 8
-const SUB := 4 # terrain vertices per tile edge
-const CELLS := 8
-const DECK := 0.14 # height of bridges and boardwalks above the water
-const BORDER := 56 # tiles of scenery beyond the playable map
+const CH := 16 # tiles per terrain chunk
+const SUB := 3 # terrain vertices per tile edge
+const REG := 20 # tiles per vegetation region
+const PX := 12 # path-mask pixels per tile
+const DECK := 0.16 # height of bridges and boardwalks above the water
+const BORDER := 110 # tiles of scenery beyond the playable map
 const GW := World.W * SUB + 1
 const GH := World.H * SUB + 1
 const LIT := [D.B.VISITOR_CENTER, D.B.RANGER, D.B.RESEARCH, D.B.SNACK, D.B.CAMP, D.B.GATE, D.B.RESTROOM]
 const NO_FOUNDATION := [D.B.BIN, D.B.SIGN, D.B.PICNIC, D.B.TRAILHEAD, D.B.CRAG, D.B.GATE, D.B.CAMP]
+const VEG := ["trunk", "leaf", "conifer", "rock", "flower", "bush", "reed"]
 
 var world: World
 var season := 0
 var climate := 0.0
 var font: Font
-var mat: StandardMaterial3D
+var mat: StandardMaterial3D # shared by models (vertex-coloured)
+var ground: ShaderMaterial
 var win_mat: StandardMaterial3D
+var tree_mat: StandardMaterial3D
 var hf := PackedFloat32Array() # fine height field, GW x GH
-var tcol := PackedColorArray() # per-tile ground colour for the current season
 var detail := FastNoiseLite.new()
+var tile_img: Image
+var tile_tex: ImageTexture
+var path_img: Image
+var path_tex: ImageTexture
+var fire_light: OmniLight3D
+var entrance_marker: Node3D
 
-var _tchunks := {}
-var _pchunks := {}
-var _dirty_t := {}
-var _dirty_p := {}
-var _veg_dirty := true
+var _deck: MeshInstance3D
+var _deck_dirty := true
+var _mask_dirty := {}
+var _tile_dirty := false
+var _veg_dirty := {}
 var _small_dirty := true
 var _struct_dirty := true
 var _seen_build := PackedByteArray()
 var _seen_trees := PackedByteArray()
+var _seen_burn := PackedByteArray()
+var _regions := {} # Vector2i -> {name: MultiMesh}
 var _mm := {}
+var _meshes := {}
+var _external := {}
 var _struct_nodes := {}
 var _lights: Array[OmniLight3D] = []
 var _orchid_tiles: Array[Vector2i] = []
 var _outer_trees: Array = []
+var _ocols := 0
+var _ohs := PackedFloat32Array()
 var _night := 0.0
-var _seen_burn := PackedByteArray()
-var fire_light: OmniLight3D
+var _t := 0.0
 
 
 func setup(w: World, f: Font) -> void:
@@ -53,33 +68,53 @@ func setup(w: World, f: Font) -> void:
 	mat.roughness = 0.95
 	mat.metallic_specular = 0.15
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# trees between the camera and what you are looking at fade away
+	tree_mat = mat.duplicate()
+	tree_mat.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_DITHER
+	tree_mat.distance_fade_min_distance = 5.0
+	tree_mat.distance_fade_max_distance = 9.0
 	win_mat = StandardMaterial3D.new()
 	win_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	win_mat.albedo_color = Color(0.45, 0.6, 0.72)
 	detail.seed = int(world.rng.seed) + 5
-	detail.frequency = 0.22
+	detail.frequency = 0.16
 	detail.fractal_octaves = 3
 	_compute_heights()
+
+	# ground material
+	tile_img = Image.create(World.W, World.H, false, Image.FORMAT_RGBA8)
 	_recolor_tiles()
+	tile_tex = ImageTexture.create_from_image(tile_img)
+	path_img = Image.create(World.W * PX, World.H * PX, false, Image.FORMAT_RGB8)
+	path_img.fill(Color.BLACK)
+	path_tex = ImageTexture.create_from_image(path_img)
+	var nz := NoiseTexture2D.new()
+	nz.width = 512
+	nz.height = 512
+	nz.seamless = true
+	nz.generate_mipmaps = true
+	var fn := FastNoiseLite.new()
+	fn.frequency = 0.012
+	fn.fractal_octaves = 5
+	nz.noise = fn
+	ground = ShaderMaterial.new()
+	ground.shader = load("res://shaders/terrain.gdshader")
+	ground.set_shader_parameter("tile_tex", tile_tex)
+	ground.set_shader_parameter("path_tex", path_tex)
+	ground.set_shader_parameter("noise_tex", nz)
+	ground.set_shader_parameter("map_size", Vector2(World.W, World.H))
+
 	for cy in range(0, ceili(World.H / float(CH))):
 		for cx in range(0, ceili(World.W / float(CH))):
-			var k := Vector2i(cx, cy)
-			for dict in [_tchunks, _pchunks]:
-				var mi := MeshInstance3D.new()
-				mi.material_override = mat
-				mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF if dict == _pchunks else GeometryInstance3D.SHADOW_CASTING_SETTING_ON
-				add_child(mi)
-				dict[k] = mi
-			_tchunks[k].mesh = _terrain_mesh(cx, cy)
-			_dirty_p[k] = true
-	_seen_build = world.build.duplicate()
-	_seen_trees = world.trees.duplicate()
-	_seen_burn = world.burned.duplicate()
-
+			var mi := MeshInstance3D.new()
+			mi.mesh = _terrain_mesh(cx, cy)
+			mi.material_override = ground
+			add_child(mi)
 	var outer := MeshInstance3D.new()
 	outer.mesh = _outskirts_mesh()
-	outer.material_override = mat
+	outer.material_override = ground
 	add_child(outer)
+	_build_highway()
 
 	var water := MeshInstance3D.new()
 	var plane := PlaneMesh.new()
@@ -87,48 +122,92 @@ func setup(w: World, f: Font) -> void:
 	water.mesh = plane
 	water.position = Vector3(World.W * 0.5, 0.0, World.H * 0.5)
 	var wm := StandardMaterial3D.new()
-	wm.albedo_color = Color(0.13, 0.33, 0.45, 0.86)
+	wm.albedo_color = Color(0.07, 0.2, 0.28, 0.9)
 	wm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	wm.roughness = 0.06
-	wm.metallic = 0.25
+	wm.roughness = 0.05
+	wm.metallic = 0.3
 	wm.metallic_specular = 0.9
 	water.material_override = wm
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	water.position.y = -0.05
 	add_child(water)
+	var lakes := MeshInstance3D.new()
+	lakes.mesh = _water_mesh()
+	lakes.material_override = wm
+	lakes.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(lakes)
 
-	var meshes := {"trunk": Models.trunk(), "leaf": Models.leaf(), "conifer": Models.conifer(), "rock": Models.rock(),
-		"flame": Models.flame(), "flower": Models.flower(), "litter": Models.litter(), "thistle": Models.thistle(), "milfoil": Models.milfoil(), "orchid": Models.orchid()}
-	for key: String in meshes:
-		var mmi := MultiMeshInstance3D.new()
-		var mm := MultiMesh.new()
-		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.use_colors = true
-		mm.mesh = meshes[key]
-		mmi.multimesh = mm
-		mmi.material_override = mat
-		if key == "flower" or key == "litter" or key == "milfoil" or key == "flame":
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		if key == "flame":
-			var fm := StandardMaterial3D.new()
-			fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-			fm.vertex_color_use_as_albedo = true
-			fm.albedo_color = Color(3.0, 1.3, 0.35)
-			mmi.material_override = fm
-		add_child(mmi)
-		_mm[key] = mm
+	_deck = MeshInstance3D.new()
+	_deck.material_override = mat
+	add_child(_deck)
+
+	_meshes = {"trunk": Models.trunk(), "leaf": _ext("broadleaf", Models.leaf()), "conifer": _ext("conifer", Models.conifer()),
+		"rock": _ext("rock", Models.rock()), "flower": Models.flower(), "bush": _ext("bush", Models.bush()), "reed": Models.reed(),
+		"flame": Models.flame(), "litter": Models.litter(), "thistle": Models.thistle(), "milfoil": Models.milfoil(), "orchid": Models.orchid()}
+	for key in ["flame", "litter", "thistle", "milfoil", "orchid", "outer"]:
+		_mm[key] = _new_mm("conifer" if key == "outer" else key, self)
+	for ry in range(0, ceili(World.H / float(REG))):
+		for rx in range(0, ceili(World.W / float(REG))):
+			var holder := Node3D.new()
+			add_child(holder)
+			var mms := {}
+			for key in VEG:
+				mms[key] = _new_mm(key, holder)
+			_regions[Vector2i(rx, ry)] = mms
+			_veg_dirty[Vector2i(rx, ry)] = true
 
 	fire_light = OmniLight3D.new()
 	fire_light.light_color = Color(1.0, 0.5, 0.15)
-	fire_light.light_energy = 6.0
-	fire_light.omni_range = 14.0
+	fire_light.light_energy = 8.0
+	fire_light.omni_range = 22.0
 	fire_light.visible = false
 	add_child(fire_light)
 	for i in world.rare.size():
 		if world.rare[i] > 0.0:
 			_orchid_tiles.append(Vector2i(i % World.W, i / World.W))
+	_seen_build = world.build.duplicate()
+	_seen_trees = world.trees.duplicate()
+	_seen_burn = world.burned.duplicate()
+	for i in world.build.size():
+		if world.build[i] != D.B.NONE:
+			_mask_dirty[i] = true
 	_build_landmarks()
+	_build_entrance_marker()
 	world.changed.connect(_on_changed)
-	_process(0.0)
+	# build everything up front so the first frame is complete
+	while not _veg_dirty.is_empty():
+		_process(0.0)
+
+
+## Uses models/<name>.glb instead of the built-in mesh when one is provided.
+func _ext(name: String, fallback: Mesh) -> Mesh:
+	var m := Models.external(name)
+	if m != null:
+		_external[fallback] = true
+		_external[m] = true
+		return m
+	return fallback
+
+
+func _new_mm(key: String, parent: Node) -> MultiMesh:
+	var mmi := MultiMeshInstance3D.new()
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.mesh = _meshes[key]
+	mmi.multimesh = mm
+	if not _external.has(mm.mesh):
+		mmi.material_override = tree_mat if key in ["trunk", "leaf", "conifer"] else mat
+	if key in ["flower", "litter", "milfoil", "flame", "reed"]:
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if key == "flame":
+		var fm := StandardMaterial3D.new()
+		fm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		fm.vertex_color_use_as_albedo = true
+		fm.albedo_color = Color(3.0, 1.3, 0.35)
+		mmi.material_override = fm
+	parent.add_child(mmi)
+	return mm
 
 
 # ------------------------------------------------------------------- heights
@@ -139,45 +218,13 @@ static func _cr(p0: float, p1: float, p2: float, p3: float, t: float) -> float:
 
 func _compute_heights() -> void:
 	var n := World.W * World.H
-	# distance to the nearest water, so land rises away from lakes and rivers
-	var wd := PackedInt32Array()
-	wd.resize(n)
-	wd.fill(999)
-	var queue: Array[int] = []
-	for i in n:
-		if world.is_water(world.terrain[i]):
-			wd[i] = 0
-			queue.append(i)
-	var qi := 0
-	while qi < queue.size():
-		var i := queue[qi]
-		qi += 1
-		var x := i % World.W
-		var y := i / World.W
-		for d in World.DIRS:
-			var nx := x + d.x
-			var ny := y + d.y
-			if World.inb(nx, ny) and wd[World.idx(nx, ny)] > wd[i] + 1:
-				wd[World.idx(nx, ny)] = wd[i] + 1
-				queue.append(World.idx(nx, ny))
 	var th := PackedFloat32Array()
 	th.resize(n)
 	for i in n:
-		var e := world.elev[i]
-		var h := 0.0
-		match world.terrain[i]:
-			D.T.DEEP: h = -1.4
-			D.T.WATER: h = -0.3
-			D.T.SAND: h = 0.25
-			D.T.ROCK: h = 2.3 + maxf(0.0, e - 0.62) * 24.0
-			D.T.PEAK: h = 4.2 + maxf(0.0, e - 0.70) * 50.0
-			_: h = 0.32 + clampf(e - 0.31, 0.0, 0.4) * 6.5
-		if h > 0.0:
-			var d := float(wd[i] - 1)
-			h = minf(h, 0.25 + d * 0.5 + d * d * 0.03)
-			# rolling hills away from the shore
-			h += detail.get_noise_2d((i % World.W) * 0.55, (i / World.W) * 0.55) * 0.9 * clampf((d - 1.0) / 4.0, 0.0, 1.0)
-			h = maxf(h, 0.2)
+		var h := world.height[i]
+		var wl := world.wlevel[i]
+		if wl != World.NO_WATER:
+			h = minf(h, wl - 0.3)
 		th[i] = h
 	# tile corners
 	var cw := World.W + 1
@@ -200,6 +247,7 @@ func _compute_heights() -> void:
 			var t := float(gx - i * SUB) / SUB
 			tmp[y * GW + gx] = _cr(ch[row + maxi(i - 1, 0)], ch[row + i], ch[row + i + 1], ch[row + mini(i + 2, World.W)], t)
 	hf.resize(GW * GH)
+	var inv := 1.0 / SUB
 	for gy in GH:
 		var j := mini(gy / SUB, World.H - 1)
 		var t := float(gy - j * SUB) / SUB
@@ -209,9 +257,9 @@ func _compute_heights() -> void:
 		var r3 := mini(j + 2, World.H) * GW
 		for gx in GW:
 			var h := _cr(tmp[r0 + gx], tmp[r1 + gx], tmp[r2 + gx], tmp[r3 + gx], t)
-			if h > 2.0:
+			if h > 9.0:
 				# craggy detail on high ground
-				h += detail.get_noise_2d(gx * 0.25 * 4.0, gy * 0.25 * 4.0) * clampf((h - 2.0) * 0.16, 0.0, 1.1)
+				h += detail.get_noise_2d(gx * inv * 2.2, gy * inv * 2.2) * clampf((h - 9.0) * 0.12, 0.0, 2.2)
 			hf[gy * GW + gx] = h
 
 
@@ -241,18 +289,69 @@ func height_at(x: float, z: float) -> float:
 	return h00 + (h11 - h01) * u + (h01 - h00) * v
 
 
-## Height of whatever you would stand on: terrain, or a road/bridge deck.
+## Water surface height at a point, or World.NO_WATER on dry land.
+func water_at(x: float, z: float) -> float:
+	return world.wlevel[clampi(int(z), 0, World.H - 1) * World.W + clampi(int(x), 0, World.W - 1)]
+
+
+## Height of whatever you would stand on: terrain, or a bridge deck.
 func surface_at(x: float, z: float) -> float:
 	var h := height_at(x, z)
 	var t := Vector2i(clampi(int(x), 0, World.W - 1), clampi(int(z), 0, World.H - 1))
 	var i := World.ti(t)
-	if world.build[i] != D.B.NONE:
-		return maxf(h, DECK if world.is_water(world.terrain[i]) else 0.04)
+	if world.build[i] != D.B.NONE and world.wlevel[i] != World.NO_WATER:
+		return maxf(h, world.wlevel[i] + DECK)
 	return h
 
 
+## Terrain or water surface, whichever is on top (what the mouse lands on).
+func top_at(x: float, z: float) -> float:
+	return maxf(height_at(x, z), water_at(x, z))
+
+
+## Lakes and rivers: each body of water sits at its own height, and rivers
+## step down the valleys.
+func _water_mesh() -> ArrayMesh:
+	var m := MeshBuilder.new()
+	var col := Color(1, 1, 1)
+	for y in World.H:
+		for x in World.W:
+			var near := false
+			for dy in range(-1, 2):
+				for dx in range(-1, 2):
+					if World.inb(x + dx, y + dy) and world.wlevel[World.idx(x + dx, y + dy)] != World.NO_WATER:
+						near = true
+			if not near:
+				continue
+			var own := world.wlevel[World.idx(x, y)]
+			var lv: Array[float] = []
+			var low := 1e9
+			for c in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1)]:
+				var sum := 0.0
+				var cnt := 0
+				for dy in [-1, 0]:
+					for dx in [-1, 0]:
+						var tx: int = x + c.x + dx
+						var ty: int = y + c.y + dy
+						if World.inb(tx, ty) and world.wlevel[World.idx(tx, ty)] != World.NO_WATER:
+							sum += world.wlevel[World.idx(tx, ty)]
+							cnt += 1
+				var v := sum / cnt if cnt > 0 else NAN
+				lv.append(v)
+				if cnt > 0:
+					low = minf(low, v)
+			for k in 4:
+				if is_nan(lv[k]):
+					lv[k] = low
+			# no water sheets hanging over a drop-off beside a lake or stream
+			if own == World.NO_WATER and world.height[World.idx(x, y)] < low - 0.5:
+				continue
+			m.quad(Vector3(x, lv[0], y), Vector3(x + 1, lv[1], y), Vector3(x + 1, lv[2], y + 1), Vector3(x, lv[3], y + 1), col, Vector3.UP)
+	return m.commit()
+
+
 ## Converts a simulation position (pixels) to a 3D point on the ground.
-func ground(p: Vector2) -> Vector3:
+func ground_pos(p: Vector2) -> Vector3:
 	var x := p.x / D.TILE
 	var z := p.y / D.TILE
 	return Vector3(x, surface_at(x, z), z)
@@ -272,32 +371,28 @@ func _on_changed(rect: Rect2i) -> void:
 			var i := World.idx(x, y)
 			if (_seen_burn[i] > 0) != (world.burned[i] > 0):
 				_seen_burn[i] = world.burned[i]
-				_recolor_tiles()
-				_dirty_t[Vector2i(x / CH, y / CH)] = true
+				_tile_dirty = true
 			if _seen_build[i] != world.build[i] or _seen_trees[i] != world.trees[i]:
 				structural = true
+				_tile_dirty = true
 				_seen_build[i] = world.build[i]
 				_seen_trees[i] = world.trees[i]
-	if not structural:
-		return
-	_veg_dirty = true
-	_struct_dirty = true
-	var r := rect.grow(1)
-	for cy in range(floori(r.position.y / float(CH)), floori((r.end.y - 1) / float(CH)) + 1):
-		for cx in range(floori(r.position.x / float(CH)), floori((r.end.x - 1) / float(CH)) + 1):
-			var k := Vector2i(cx, cy)
-			if _tchunks.has(k):
-				_dirty_p[k] = true
+				_veg_dirty[Vector2i(x / REG, y / REG)] = true
+				for dy in range(-1, 2):
+					for dx in range(-1, 2):
+						if World.inb(x + dx, y + dy):
+							_mask_dirty[World.idx(x + dx, y + dy)] = true
+	if structural:
+		_struct_dirty = true
+		_deck_dirty = true
 
 
 func set_season(s: int) -> void:
 	if s == season:
 		return
 	season = s
-	_recolor_tiles()
-	for k in _tchunks:
-		_dirty_t[k] = true
-	_veg_dirty = true
+	for k in _regions:
+		_veg_dirty[k] = true
 
 
 ## 0 = full daylight, 1 = night. Lights the windows and lamps.
@@ -307,26 +402,39 @@ func set_night(f: float) -> void:
 	_night = f
 	win_mat.albedo_color = Color(0.45, 0.6, 0.72).lerp(Color(3.2, 2.2, 1.0), f)
 	for l in _lights:
-		l.light_energy = f * 2.2
+		l.light_energy = f * 2.6
 		l.visible = f > 0.03
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if world == null:
 		return
-	var budget := 8 # spread seasonal recolouring over several frames
-	for k in _dirty_t.keys():
-		_tchunks[k].mesh = _terrain_mesh(k.x, k.y)
-		_dirty_t.erase(k)
+	_t += delta
+	ground.set_shader_parameter("snowline", (4.0 if season == 3 else (17.0 if season == 0 else 22.0)) + climate * 4.0)
+	ground.set_shader_parameter("snow_all", 1.0 if season == 3 else 0.0)
+	ground.set_shader_parameter("autumn", 1.0 if season == 2 else 0.0)
+	if entrance_marker != null and entrance_marker.visible:
+		entrance_marker.get_child(0).scale = Vector3.ONE * (1.0 + sin(_t * 3.0) * 0.12)
+		entrance_marker.visible = world.count_kind(D.B.GATE) == 0
+	if not _mask_dirty.is_empty():
+		for i: int in _mask_dirty.keys():
+			_paint_tile(i % World.W, i / World.W)
+		_mask_dirty.clear()
+		path_tex.update(path_img)
+	if _tile_dirty:
+		_tile_dirty = false
+		_recolor_tiles()
+		tile_tex.update(tile_img)
+	var budget := 6
+	for k in _veg_dirty.keys():
+		_rebuild_region(k)
+		_veg_dirty.erase(k)
 		budget -= 1
 		if budget <= 0:
 			break
-	for k in _dirty_p.keys():
-		_pchunks[k].mesh = _path_mesh(k.x, k.y)
-		_dirty_p.erase(k)
-	if _veg_dirty:
-		_veg_dirty = false
-		_rebuild_vegetation()
+	if _deck_dirty:
+		_deck_dirty = false
+		_deck.mesh = _deck_mesh()
 	if _small_dirty:
 		_small_dirty = false
 		_rebuild_small()
@@ -337,42 +445,44 @@ func _process(_delta: float) -> void:
 
 # ------------------------------------------------------------------- terrain
 
+## Base ground colour of a tile. Alpha marks red-rock desert for the shader.
+func tile_color(i: int) -> Color:
+	var bio := world.biome[i]
+	var t := world.terrain[i]
+	var c := Color("5f8f44")
+	match t:
+		D.T.DEEP: c = Color("23485c")
+		D.T.WATER: c = Color("5d7f7a")
+		D.T.SAND: c = Color("b9a67a")
+		D.T.GRASS: c = Color("5f8f44")
+		D.T.MEADOW: c = Color("7ea24e")
+		D.T.FOREST: c = Color("33562f")
+		D.T.ROCK: c = Color("77716a")
+		D.T.PEAK: c = Color("6b676b")
+	match bio:
+		D.BIOME.DESERT:
+			if t == D.T.SAND: c = Color("bd8a58")
+			elif t == D.T.GRASS: c = Color("8f8f62")
+			elif t == D.T.ROCK: c = Color("a35a3a")
+			c.a = 0.0 # flagged below
+		D.BIOME.VALLEY:
+			if t == D.T.GRASS: c = Color("7f9a4a")
+			elif t == D.T.MEADOW: c = Color("93a850")
+		D.BIOME.WETLAND:
+			if t == D.T.GRASS: c = Color("4f7a36")
+			elif t == D.T.SAND: c = Color("6f6a48")
+		D.BIOME.ALPINE:
+			if t == D.T.MEADOW or t == D.T.GRASS: c = Color("7d8a55")
+	if world.burned[i] > 0:
+		c = Color("2c2622")
+	c.a = 1.0 if bio == D.BIOME.DESERT else 0.0
+	return c
+
+
 func _recolor_tiles() -> void:
-	tcol.resize(World.W * World.H)
-	for i in World.W * World.H:
-		var c := Color.MAGENTA
-		match world.terrain[i]:
-			D.T.DEEP: c = Color("2b5a73")
-			D.T.WATER: c = Color("6d9597")
-			D.T.SAND: c = Color("d6c598")
-			D.T.GRASS: c = [Color("6f9f48"), Color("678f42"), Color("968f4c"), Color("e3e9e8")][season]
-			D.T.MEADOW: c = [Color("8bb254"), Color("82a64e"), Color("ab9d55"), Color("e9eeec")][season]
-			D.T.FOREST: c = [Color("40683a"), Color("3a5f34"), Color("5c5f36"), Color("cbd6d1")][season]
-			D.T.ROCK: c = Color("8f887b") if season != 3 else Color("c9cbcd")
-			D.T.PEAK: c = Color("807b82")
-		if world.burned[i] > 0:
-			c = Color("3b332c")
-		tcol[i] = c
-
-
-func _snowline() -> float:
-	return 0.7 if season == 3 else (5.4 if season == 0 else 6.6) + climate * 1.5
-
-
-## Colour for a point of ground from biome, steepness, altitude and season.
-func _shade(base: Color, h: float, ny: float, jitter: float) -> Color:
-	if h < 0.0:
-		return base.lerp(Color("244f66"), clampf(-h * 0.9, 0.0, 1.0))
-	var c := base
-	if h < 0.16:
-		c = c.lerp(Color("cdbb8e"), 1.0 - h / 0.16)
-	var slope := 1.0 - ny
-	c = c.lerp(Color("7b746a").lerp(Color("5f5a55"), jitter), smoothstep(0.09, 0.26, slope))
-	var sl := _snowline()
-	var snow := smoothstep(sl, sl + 1.6, h + jitter * 1.2) * (1.0 - smoothstep(0.3, 0.55, slope))
-	c = c.lerp(Color("f3f6fa"), snow)
-	var j := (jitter - 0.5) * 0.06
-	return Color(c.r + j, c.g + j, c.b + j * 0.6)
+	for y in World.H:
+		for x in World.W:
+			tile_img.set_pixel(x, y, tile_color(y * World.W + x))
 
 
 func _terrain_mesh(cx: int, cy: int) -> ArrayMesh:
@@ -384,40 +494,32 @@ func _terrain_mesh(cx: int, cy: int) -> ArrayMesh:
 	var rows := gy1 - gy0 + 1
 	var verts := PackedVector3Array()
 	var norms := PackedVector3Array()
-	var colors := PackedColorArray()
 	var idx := PackedInt32Array()
 	verts.resize(cols * rows)
 	norms.resize(cols * rows)
-	colors.resize(cols * rows)
+	idx.resize((cols - 1) * (rows - 1) * 6)
 	var step := 1.0 / SUB
 	var k := 0
 	for gy in range(gy0, gy1 + 1):
 		for gx in range(gx0, gx1 + 1):
-			var h := hf[gy * GW + gx]
-			var nrm := Vector3(_h(gx - 1, gy) - _h(gx + 1, gy), 2.0 * step, _h(gx, gy - 1) - _h(gx, gy + 1)).normalized()
-			# blend the colours of the four nearest tile centres
-			var fx := clampf(gx * step - 0.5, 0.0, World.W - 1.0)
-			var fy := clampf(gy * step - 0.5, 0.0, World.H - 1.0)
-			var tx := mini(int(fx), World.W - 2)
-			var ty := mini(int(fy), World.H - 2)
-			var u := fx - tx
-			var v := fy - ty
-			var i := ty * World.W + tx
-			var base := tcol[i].lerp(tcol[i + 1], u).lerp(tcol[i + World.W].lerp(tcol[i + World.W + 1], u), v)
-			verts[k] = Vector3(gx * step, h, gy * step)
-			norms[k] = nrm
-			colors[k] = _shade(base, h, nrm.y, D.hash2(gx, gy, 4))
+			verts[k] = Vector3(gx * step, hf[gy * GW + gx], gy * step)
+			norms[k] = Vector3(_h(gx - 1, gy) - _h(gx + 1, gy), 2.0 * step, _h(gx, gy - 1) - _h(gx, gy + 1)).normalized()
 			k += 1
+	k = 0
 	for r in rows - 1:
 		for c in cols - 1:
 			var a := r * cols + c
-			idx.append(a); idx.append(a + 1); idx.append(a + cols + 1)
-			idx.append(a); idx.append(a + cols + 1); idx.append(a + cols)
+			idx[k] = a; idx[k + 1] = a + 1; idx[k + 2] = a + cols + 1
+			idx[k + 3] = a; idx[k + 4] = a + cols + 1; idx[k + 5] = a + cols
+			k += 6
+	return _commit(verts, norms, idx)
+
+
+func _commit(verts: PackedVector3Array, norms: PackedVector3Array, idx: PackedInt32Array) -> ArrayMesh:
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
 	arrays[Mesh.ARRAY_NORMAL] = norms
-	arrays[Mesh.ARRAY_COLOR] = colors
 	arrays[Mesh.ARRAY_INDEX] = idx
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
@@ -431,76 +533,180 @@ func _outer_height(x: int, y: int) -> float:
 	var inner := height_at(cxp, cyp)
 	var d := Vector2(x - cxp, y - cyp).length()
 	if d <= 0.0:
-		return inner - 0.15
+		return inner - 0.2
 	var e := world.raw_elev(x, y)
-	var g := -0.6
-	if e > 0.70: g = 4.2 + (e - 0.70) * 50.0
-	elif e > 0.62: g = 2.3 + (e - 0.62) * 24.0
-	elif e > 0.30: g = 0.3 + (e - 0.31) * 6.5
-	g += maxf(0.0, d - 6.0) * 0.09 + detail.get_noise_2d(x * 2.0, y * 2.0) * clampf(g * 0.15, 0.0, 1.2)
-	return lerpf(inner, g, smoothstep(0.0, 9.0, d))
+	var g := -0.8
+	if e > 0.70: g = 8.6 + (e - 0.70) * 150.0
+	elif e > 0.62: g = 3.0 + (e - 0.62) * 70.0
+	elif e > 0.30: g = 0.35 + (e - 0.31) * 9.0
+	g += maxf(0.0, d - 8.0) * 0.14 + detail.get_noise_2d(x * 1.3, y * 1.3) * clampf(g * 0.2, 0.0, 3.0)
+	if y > World.H:
+		g = lerpf(g, clampf(g, 0.3, 2.0), 0.7) # gentler country toward the highway
+	return lerpf(inner, g, smoothstep(0.0, 12.0, d))
 
 
 func _outskirts_mesh() -> ArrayMesh:
+	var step := 2
 	var x0 := -BORDER
 	var y0 := -BORDER
-	var cols := World.W + BORDER * 2 + 1
-	var rows := World.H + BORDER * 2 + 1
-	var hs := PackedFloat32Array()
-	hs.resize(cols * rows)
+	var cols := (World.W + BORDER * 2) / step + 1
+	var rows := (World.H + BORDER * 2) / step + 1
+	_ocols = cols
+	_ohs.resize(cols * rows)
 	for r in rows:
 		for c in cols:
-			hs[r * cols + c] = _outer_height(x0 + c, y0 + r)
+			_ohs[r * cols + c] = _outer_height(x0 + c * step, y0 + r * step)
 	var verts := PackedVector3Array()
 	var norms := PackedVector3Array()
-	var colors := PackedColorArray()
 	var idx := PackedInt32Array()
 	verts.resize(cols * rows)
 	norms.resize(cols * rows)
-	colors.resize(cols * rows)
-	var forest := [Color("4f7c41"), Color("47703b"), Color("6c703d"), Color("cbd6d1")]
 	for r in rows:
 		for c in cols:
 			var k := r * cols + c
-			var h := hs[k]
-			var hl := hs[r * cols + maxi(c - 1, 0)]
-			var hr := hs[r * cols + mini(c + 1, cols - 1)]
-			var hu := hs[maxi(r - 1, 0) * cols + c]
-			var hd := hs[mini(r + 1, rows - 1) * cols + c]
-			var nrm := Vector3(hl - hr, 2.0, hu - hd).normalized()
-			var x := x0 + c
-			var y := y0 + r
+			var h := _ohs[k]
+			var nrm := Vector3(_ohs[r * cols + maxi(c - 1, 0)] - _ohs[r * cols + mini(c + 1, cols - 1)], 2.0 * step,
+				_ohs[maxi(r - 1, 0) * cols + c] - _ohs[mini(r + 1, rows - 1) * cols + c]).normalized()
+			var x := x0 + c * step
+			var y := y0 + r * step
 			verts[k] = Vector3(x, h, y)
 			norms[k] = nrm
+			var inside := x >= 0 and y >= 0 and x <= World.W and y <= World.H
 			var jit := D.hash2(x, y, 4)
-			var base: Color = forest[season].lerp(Color("76a44f"), jit * 0.5)
-			if h > 2.6:
-				base = base.lerp(Color("8f887b"), clampf((h - 2.6) * 0.8, 0.0, 1.0))
-			colors[k] = _shade(base, h, nrm.y, jit)
-			var inside := x >= 0 and y >= 0 and x < World.W and y < World.H
-			if not inside and h > 0.25 and h < 3.4 and nrm.y > 0.8 and jit < 0.7:
-				_outer_trees.append(Vector3(x + jit - 0.35, h, y + D.hash2(x, y, 9) - 0.5))
-				if jit < 0.4:
-					_outer_trees.append(Vector3(x + D.hash2(x, y, 10) * 0.9, h, y + jit))
+			var dist := maxf(maxf(-x, x - World.W), maxf(-y, y - World.H))
+			var approach: bool = y > World.H - 4 and absf(x - world.entry.x) < 16.0 # keep the entrance open
+			if not inside and not approach and dist < 60.0 and h > 0.3 and h < 7.0 and nrm.y > 0.82 and jit < 0.75:
+				for k2 in 3:
+					_outer_trees.append(Vector3(x + D.hash2(x, y, 9 + k2) * 2.0, 0, y + D.hash2(x, y, 19 + k2) * 2.0))
 	for r in rows - 1:
 		for c in cols - 1:
-			var x := x0 + c
-			var y := y0 + r
-			if x >= 1 and y >= 1 and x < World.W - 1 and y < World.H - 1:
+			var x := x0 + c * step
+			var y := y0 + r * step
+			if x >= step and y >= step and x < World.W - step and y < World.H - step:
 				continue
 			var a := r * cols + c
 			idx.append(a); idx.append(a + 1); idx.append(a + cols + 1)
 			idx.append(a); idx.append(a + cols + 1); idx.append(a + cols)
-	var arrays := []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = verts
-	arrays[Mesh.ARRAY_NORMAL] = norms
-	arrays[Mesh.ARRAY_COLOR] = colors
-	arrays[Mesh.ARRAY_INDEX] = idx
-	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	return mesh
+	return _commit(verts, norms, idx)
 
+
+## Height of the outskirts mesh at a point (for the highway and far trees).
+func outer_at(x: float, z: float) -> float:
+	var fx := clampf((x + BORDER) * 0.5, 0.0, _ocols - 1.001)
+	var fz := clampf((z + BORDER) * 0.5, 0.0, _ohs.size() / _ocols - 1.001)
+	var gx := int(fx)
+	var gz := int(fz)
+	var u := fx - gx
+	var v := fz - gz
+	var i := gz * _ocols + gx
+	var h00 := _ohs[i]
+	var h10 := _ohs[i + 1]
+	var h01 := _ohs[i + _ocols]
+	var h11 := _ohs[i + _ocols + 1]
+	if u >= v:
+		return h00 + (h10 - h00) * u + (h11 - h10) * v
+	return h00 + (h11 - h01) * u + (h01 - h00) * v
+
+
+## The state highway that passes the park, and the spur visitors arrive on.
+func _build_highway() -> void:
+	var m := MeshBuilder.new()
+	var ex := world.entry.x + 0.5
+	var hz := World.H + 7.0
+	var road := Color("33353a")
+	var prev_l := Vector3.ZERO
+	var prev_r := Vector3.ZERO
+	var prev_c := Vector3.ZERO
+	var first := true
+	for k in range(-BORDER, World.W + BORDER, 1):
+		var x := float(k)
+		var z := hz + sin(x * 0.045) * 3.0
+		var y := maxf(maxf(outer_at(x, z - 0.6), outer_at(x, z + 0.6)), 0.25) + 0.18
+		var l := Vector3(x, y, z - 0.6)
+		var r := Vector3(x, y, z + 0.6)
+		var c := Vector3(x, y + 0.02, z)
+		if not first:
+			m.quad(prev_l, l, r, prev_r, road, Vector3.UP)
+			m.quad(prev_l, l, l + Vector3(0, -1.5, -0.5), prev_l + Vector3(0, -1.5, -0.5), Color("5a5247"), Vector3.FORWARD)
+			m.quad(prev_r, r, r + Vector3(0, -1.5, 0.5), prev_r + Vector3(0, -1.5, 0.5), Color("5a5247"), Vector3.BACK)
+			if k % 2 == 0:
+				m.quad(prev_c + Vector3(0, 0, -0.03), c + Vector3(0, 0, -0.03), c + Vector3(0, 0, 0.03), prev_c + Vector3(0, 0, 0.03), Color("d9bd55"), Vector3.UP)
+		prev_l = l
+		prev_r = r
+		prev_c = c
+		first = false
+	# spur from the highway up to the park boundary
+	var zj := hz + sin(ex * 0.045) * 3.0
+	first = true
+	for k in 16:
+		var z := lerpf(zj, World.H - 0.02, k / 15.0)
+		var y := maxf(outer_at(ex, z), 0.25) + 0.16
+		if k == 15:
+			y = height_at(ex, World.H - 0.02) + 0.05
+		var l := Vector3(ex - 0.45, y, z)
+		var r := Vector3(ex + 0.45, y, z)
+		if not first:
+			m.quad(prev_l, l, r, prev_r, road, Vector3.UP)
+			m.quad(prev_l, l, l + Vector3(-0.5, -1.5, 0), prev_l + Vector3(-0.5, -1.5, 0), Color("5a5247"), Vector3.LEFT)
+			m.quad(prev_r, r, r + Vector3(0.5, -1.5, 0), prev_r + Vector3(0.5, -1.5, 0), Color("5a5247"), Vector3.RIGHT)
+		prev_l = l
+		prev_r = r
+		first = false
+	var mi := MeshInstance3D.new()
+	mi.mesh = m.commit()
+	mi.material_override = mat
+	add_child(mi)
+
+
+func _build_entrance_marker() -> void:
+	var e := world.entry
+	var base := tile_center(e + Vector2i(0, -2))
+	var post := MeshInstance3D.new()
+	post.mesh = Models.entrance_sign()
+	post.material_override = mat
+	post.position = tile_center(e) + Vector3(1.1, 0, 0.2)
+	add_child(post)
+	entrance_marker = Node3D.new()
+	entrance_marker.position = base
+	var beam := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = 0.5
+	cyl.bottom_radius = 0.5
+	cyl.height = 14.0
+	cyl.radial_segments = 16
+	beam.mesh = cyl
+	beam.position = Vector3(0, 7.0, 0)
+	var bm := StandardMaterial3D.new()
+	bm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	bm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	bm.albedo_color = Color(1.0, 0.85, 0.3, 0.22)
+	bm.cull_mode = BaseMaterial3D.CULL_DISABLED
+	beam.material_override = bm
+	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	entrance_marker.add_child(beam)
+	var label := _label("Park road starts here", 20)
+	label.position = Vector3(0, 4.2, 0)
+	entrance_marker.add_child(label)
+	add_child(entrance_marker)
+
+
+func _label(text: String, size: int) -> Label3D:
+	var label := Label3D.new()
+	label.text = text
+	label.font = font
+	label.font_size = size
+	label.outline_size = 14
+	label.fixed_size = true
+	label.pixel_size = 0.0011
+	label.modulate = Color("fff8dc")
+	label.outline_modulate = Color(0.06, 0.1, 0.08, 0.9)
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.no_depth_test = true
+	label.render_priority = 5
+	return label
+
+
+# ---------------------------------------------------------------- path mask
 
 func _b(x: int, y: int) -> int:
 	if World.inb(x, y):
@@ -508,191 +714,229 @@ func _b(x: int, y: int) -> int:
 	return D.B.ROAD if x == world.entry.x and y >= World.H else D.B.NONE
 
 
-## A strip following the curve a -> ctrl -> b (tile coordinates), draped on the ground.
-func _ribbon(m: MeshBuilder, a: Vector2, ctrl: Vector2, b: Vector2, half: float, col: Color, min_y: float, lift: float, cross: int, dashed: bool = false) -> void:
-	var seg := 8
-	var prev: Array[Vector3] = []
-	for s in seg + 1:
-		var t := float(s) / seg
-		var p := a.lerp(ctrl, t).lerp(ctrl.lerp(b, t), t)
-		var tan := (ctrl - a).lerp(b - ctrl, t)
-		if tan.length_squared() < 0.00001:
-			tan = b - a
-		tan = tan.normalized()
-		var perp := Vector2(-tan.y, tan.x)
-		var row: Array[Vector3] = []
-		for c in cross + 1:
-			var q := p + perp * half * (float(c) / cross * 2.0 - 1.0)
-			row.append(Vector3(q.x, maxf(height_at(q.x, q.y), min_y) + lift, q.y))
-		if s > 0 and not (dashed and s % 2 == 0):
-			for c in cross:
-				m.quad(prev[c], prev[c + 1], row[c + 1], row[c], col, Vector3.UP)
-		prev = row
+func _arms(x: int, y: int, road: bool) -> Array[Vector2]:
+	var arms: Array[Vector2] = []
+	for d in World.DIRS:
+		var nb := _b(x + d.x, y + d.y)
+		if (road and (nb == D.B.ROAD or nb == D.B.GATE or nb == D.B.PARKING)) or (not road and nb != D.B.NONE):
+			arms.append(Vector2(d))
+	return arms
 
 
-func _disc(m: MeshBuilder, c: Vector2, r: float, col: Color, min_y: float, lift: float) -> void:
-	var mid := Vector3(c.x, maxf(height_at(c.x, c.y), min_y) + lift, c.y)
-	for i in 10:
-		var a0 := TAU * i / 10.0
-		var a1 := TAU * (i + 1) / 10.0
-		var p0 := c + Vector2(cos(a0), sin(a0)) * r
-		var p1 := c + Vector2(cos(a1), sin(a1)) * r
-		m.tri(mid, Vector3(p0.x, maxf(height_at(p0.x, p0.y), min_y) + lift, p0.y),
-			Vector3(p1.x, maxf(height_at(p1.x, p1.y), min_y) + lift, p1.y), col, Vector3.UP)
+## Points along the curved centre line(s) of a road or trail tile, in tile-local 0..1.
+func _centerline(arms: Array[Vector2]) -> Array:
+	var lines: Array = []
+	var c := Vector2(0.5, 0.5)
+	if arms.size() == 2:
+		var pts := PackedVector2Array()
+		for s in 9:
+			var t := s / 8.0
+			var a := c + arms[0] * 0.5
+			var b := c + arms[1] * 0.5
+			pts.append(a.lerp(c, t).lerp(c.lerp(b, t), t))
+		lines.append(pts)
+	else:
+		for arm in arms:
+			lines.append(PackedVector2Array([c + arm * 0.5, c]))
+		if arms.is_empty():
+			lines.append(PackedVector2Array([c, c]))
+	return lines
 
 
-func _path_mesh(cx: int, cy: int) -> ArrayMesh:
+## Paints one tile of the path mask: R = trail, G = asphalt, B = worn ground.
+func _paint_tile(x: int, y: int) -> void:
+	var i := World.idx(x, y)
+	var b := world.build[i]
+	var px0 := x * PX
+	var py0 := y * PX
+	if b == D.B.NONE or world.is_water(world.terrain[i]):
+		path_img.fill_rect(Rect2i(px0, py0, PX, PX), Color.BLACK)
+		return
+	if b == D.B.PARKING:
+		path_img.fill_rect(Rect2i(px0, py0, PX, PX), Color(0, 1, 0))
+		return
+	var road := b == D.B.ROAD or b == D.B.GATE
+	if not road and b != D.B.TRAIL:
+		# worn dirt around a building
+		for py in PX:
+			for px in PX:
+				var d := Vector2((px + 0.5) / PX - 0.5, (py + 0.5) / PX - 0.5).length()
+				path_img.set_pixel(px0 + px, py0 + py, Color(0, 0, clampf(1.25 - d * 2.1, 0.0, 1.0)))
+		return
+	var lines := _centerline(_arms(x, y, road))
+	var half := 0.36 if road else 0.11
+	var soft := 0.11 if road else 0.13
+	for py in PX:
+		for px in PX:
+			var p := Vector2((px + 0.5) / PX, (py + 0.5) / PX)
+			var best := 9.0
+			for pts: PackedVector2Array in lines:
+				for k in pts.size() - 1:
+					var a := pts[k]
+					var ab := pts[k + 1] - a
+					var t := 0.0
+					var len2 := ab.length_squared()
+					if len2 > 0.000001:
+						t = clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+					best = minf(best, p.distance_to(a + ab * t))
+			var v := clampf(1.0 - (best - half) / soft, 0.0, 1.0)
+			path_img.set_pixel(px0 + px, py0 + py, Color(0, v, 0) if road else Color(v, 0, 0))
+
+
+## Mesh parts of paths: bridges and boardwalks over water, and painted lines.
+func _deck_mesh() -> ArrayMesh:
 	var m := MeshBuilder.new()
-	var step := 1.0 / CELLS
-	for y in range(cy * CH, mini(World.H, cy * CH + CH)):
-		for x in range(cx * CH, mini(World.W, cx * CH + CH)):
-			var i := World.idx(x, y)
-			var b := world.build[i]
-			if b == D.B.NONE:
-				continue
-			var water := world.is_water(world.terrain[i])
-			var min_y := DECK if water else 0.04
-			var c := Vector2(x + 0.5, y + 0.5)
-			if b == D.B.ROAD or b == D.B.GATE or b == D.B.TRAIL:
-				var road := b != D.B.TRAIL
-				var arms: Array[Vector2] = []
-				for d in World.DIRS:
-					var nb := _b(x + d.x, y + d.y)
-					if (road and (nb == D.B.ROAD or nb == D.B.GATE or nb == D.B.PARKING)) or (not road and nb != D.B.NONE):
-						arms.append(Vector2(d))
-				var half := 0.37 if road else 0.115
-				var col := Color("4b4e56") if road else Color("a98659")
-				if water:
-					col = Color("6b6f78") if road else Color("8a6238")
-				elif not road and (world.terrain[i] == D.T.ROCK or world.terrain[i] == D.T.PEAK):
-					col = Color("b3a78e")
-				var lift := 0.035 if road else 0.045
-				var cross := 4 if road else 2
-				var edge := col.darkened(0.25) if not road else Color("8d8f95")
-				if arms.size() == 2:
-					_ribbon(m, c + arms[0] * 0.5, c, c + arms[1] * 0.5, half + 0.035, edge, min_y, lift - 0.012, cross)
-					_ribbon(m, c + arms[0] * 0.5, c, c + arms[1] * 0.5, half, col, min_y, lift, cross)
-					if road:
-						_ribbon(m, c + arms[0] * 0.5, c, c + arms[1] * 0.5, 0.016, Color("d9bd55"), min_y, lift + 0.012, 1, true)
-				else:
-					_disc(m, c, half + 0.035, edge, min_y, lift - 0.012)
-					for arm in arms:
-						_ribbon(m, c + arm * 0.5, c + arm * 0.25, c, half + 0.035, edge, min_y, lift - 0.012, cross)
-					_disc(m, c, half, col, min_y, lift)
-					for arm in arms:
-						_ribbon(m, c + arm * 0.5, c + arm * 0.25, c, half, col, min_y, lift, cross)
-				if water:
-					for k in 4:
-						var q := c + Vector2(cos(k * PI * 0.5 + 0.78), sin(k * PI * 0.5 + 0.78)) * (half + 0.05)
-						m.box(Vector3(q.x, DECK * 0.2, q.y), Vector3(0.06, DECK + 0.5, 0.06), Color("5f4428") if not road else Color("8a8d92"))
-				continue
-			# parking lots and building pads cover the whole tile
-			var col := Color("5d616a") if b == D.B.PARKING else Color("9c8c6c")
-			if b != D.B.PARKING:
-				continue
-			for cj in CELLS:
-				for ci in CELLS:
-					var x0 := x + ci * step
-					var z0 := y + cj * step
-					var x1 := x0 + step
-					var z1 := z0 + step
-					m.quad(
-						Vector3(x0, maxf(height_at(x0, z0), min_y) + 0.03, z0),
-						Vector3(x1, maxf(height_at(x1, z0), min_y) + 0.03, z0),
-						Vector3(x1, maxf(height_at(x1, z1), min_y) + 0.03, z1),
-						Vector3(x0, maxf(height_at(x0, z1), min_y) + 0.03, z1), col, Vector3.UP)
-			for lx in [0.01, 0.5]:
-				var a := Vector3(x + lx, maxf(height_at(x + lx, y + 0.12), min_y) + 0.05, y + 0.12)
-				var bb := Vector3(x + lx, maxf(height_at(x + lx, y + 0.88), min_y) + 0.05, y + 0.88)
-				m.quad(a - Vector3(0.012, 0, 0), a + Vector3(0.012, 0, 0), bb + Vector3(0.012, 0, 0), bb - Vector3(0.012, 0, 0), Color("d8d8d8"), Vector3.UP)
+	for i in world.build.size():
+		var b := world.build[i]
+		if b != D.B.ROAD and b != D.B.GATE and b != D.B.TRAIL and b != D.B.PARKING:
+			continue
+		var x := i % World.W
+		var y := i / World.W
+		var water := world.wlevel[i] != World.NO_WATER
+		var min_y := world.wlevel[i] + DECK if water else -99.0
+		if b == D.B.PARKING:
+			for lx in [0.02, 0.5]:
+				var a := Vector3(x + lx, height_at(x + lx, y + 0.12) + 0.03, y + 0.12)
+				var bb := Vector3(x + lx, height_at(x + lx, y + 0.88) + 0.03, y + 0.88)
+				m.quad(a - Vector3(0.012, 0, 0), a + Vector3(0.012, 0, 0), bb + Vector3(0.012, 0, 0), bb - Vector3(0.012, 0, 0), Color("c9c9c9"), Vector3.UP)
+			continue
+		var road := b != D.B.TRAIL
+		var half := 0.37 if road else 0.13
+		for pts: PackedVector2Array in _centerline(_arms(x, y, road)):
+			var prev: Array[Vector3] = []
+			for k in pts.size():
+				var p := pts[k] + Vector2(x, y)
+				var tan := (pts[mini(k + 1, pts.size() - 1)] - pts[maxi(k - 1, 0)])
+				if tan.length_squared() < 0.00001:
+					continue
+				tan = tan.normalized()
+				var perp := Vector2(-tan.y, tan.x)
+				var row: Array[Vector3] = []
+				for s in [-1.0, -0.04, 0.04, 1.0]:
+					var q: Vector2 = p + perp * half * s
+					row.append(Vector3(q.x, maxf(height_at(q.x, q.y), min_y) + 0.03, q.y))
+				if not prev.is_empty():
+					if water:
+						var col := Color("5d6068") if road else Color("7a5a36")
+						m.quad(prev[0], prev[3], row[3], row[0], col, Vector3.UP)
+						m.quad(prev[0], row[0], row[0] + Vector3(0, -0.12, 0), prev[0] + Vector3(0, -0.12, 0), col.darkened(0.3), Vector3(-perp.x, 0, -perp.y))
+						m.quad(prev[3], row[3], row[3] + Vector3(0, -0.12, 0), prev[3] + Vector3(0, -0.12, 0), col.darkened(0.3), Vector3(perp.x, 0, perp.y))
+					if road and k % 2 == 0 and pts.size() > 2:
+						m.quad(prev[1] + Vector3(0, 0.012, 0), prev[2] + Vector3(0, 0.012, 0), row[2] + Vector3(0, 0.012, 0), row[1] + Vector3(0, 0.012, 0), Color("c9ad4a"), Vector3.UP)
+				prev = row
+		if water:
+			for k in 4:
+				var q := Vector2(x + 0.5, y + 0.5) + Vector2(cos(k * PI * 0.5 + 0.78), sin(k * PI * 0.5 + 0.78)) * (half + 0.02)
+				m.box(Vector3(q.x, min_y - 0.7, q.y), Vector3(0.07, 1.4, 0.07), Color("4a3620") if not road else Color("777a80"))
 	return m.commit()
 
 
 # ---------------------------------------------------------------- vegetation
 
-func _fill(key: String, xforms: Array, colors: Array) -> void:
-	var mm: MultiMesh = _mm[key]
+func _fill(mm: MultiMesh, xforms: Array, colors: Array) -> void:
 	mm.instance_count = xforms.size()
 	for i in xforms.size():
 		mm.set_instance_transform(i, xforms[i])
 		mm.set_instance_color(i, colors[i])
 
 
-func _xf(x: float, z: float, s: float, yaw: float, sink: float = 0.0) -> Transform3D:
-	return Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3(s, s, s)), Vector3(x, height_at(x, z) - sink, z))
+func _xf(x: float, z: float, s: float, yaw: float, sink: float = 0.0, squash: float = 1.0) -> Transform3D:
+	return Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3(s, s * squash, s)), Vector3(x, height_at(x, z) - sink, z))
 
 
 func _conifer_color(hh: float) -> Color:
-	var cc := Color("1c4533").lerp(Color("316647"), hh)
+	var cc := Color("15382a").lerp(Color("2a573c"), hh)
 	if season == 3:
-		cc = cc.lerp(Color("e9f0f3"), 0.55)
+		cc = cc.lerp(Color("dfe8ec"), 0.5)
 	return cc
 
 
-func _rebuild_vegetation() -> void:
-	var trunks: Array = []
-	var trunk_c: Array = []
-	var leaves: Array = []
-	var leaf_c: Array = []
-	var conifers: Array = []
-	var con_c: Array = []
-	var rocks: Array = []
-	var rock_c: Array = []
-	var flowers: Array = []
-	var flower_c: Array = []
+func _rebuild_region(key: Vector2i) -> void:
+	var out := {}
+	for name in VEG:
+		out[name] = [[], []]
 	var bloom := [Color("fffbe6"), Color("f2cf4a"), Color("e98ab0"), Color("a887d6")]
 	var leaf_pal := [
-		[Color("437f3d"), Color("6a9f4c")], [Color("356b35"), Color("52883f")],
-		[Color("b5622c"), Color("d9a93c")], [Color("9aa39c"), Color("e6ecee")]]
-	for y in World.H:
-		for x in World.W:
+		[Color("3f7a3a"), Color("6a9f4c")], [Color("2f6332"), Color("4c813c")],
+		[Color("c98a22"), Color("e6bf3a")], [Color("8d948d"), Color("d9e0e3")]]
+	for y in range(key.y * REG, mini(World.H, key.y * REG + REG)):
+		for x in range(key.x * REG, mini(World.W, key.x * REG + REG)):
 			var i := World.idx(x, y)
 			if world.build[i] != D.B.NONE or world.landmark_at.has(i):
 				continue
 			var t := world.terrain[i]
+			var bio := world.biome[i]
 			var h := D.hash2(x, y, 1)
 			var h2 := D.hash2(x, y, 7)
 			var kind := world.trees[i]
 			if kind > 0:
-				var count := 3 if t == D.T.FOREST else 1
+				var count := 2 if t == D.T.FOREST else 1
+				if t == D.T.FOREST and h < 0.45:
+					count = 3
 				for k in count:
 					var hh := D.hash2(x, y, 8 + k)
-					var px := x + 0.12 + D.hash2(x, y, 50 + k) * 0.76
-					var pz := y + 0.12 + D.hash2(x, y, 60 + k) * 0.76
-					if height_at(px, pz) < 0.05:
-						continue
-					var xf := _xf(px, pz, 0.85 + hh * 0.75, hh * TAU, 0.05)
-					trunks.append(xf)
-					trunk_c.append(Color.WHITE)
+					var px := x + 0.1 + D.hash2(x, y, 50 + k) * 0.8
+					var pz := y + 0.1 + D.hash2(x, y, 60 + k) * 0.8
+					var s := 1.3 + hh * 1.0
+					if bio == D.BIOME.ALPINE: s = 0.6 + hh * 0.6
+					elif bio == D.BIOME.DESERT: s = 0.55 + hh * 0.3
+					var xf := _xf(px, pz, s, hh * TAU, 0.08, 0.9 + D.hash2(x, y, 70 + k) * 0.35)
+					out.trunk[0].append(xf)
 					if kind == 2:
-						conifers.append(xf)
-						con_c.append(_conifer_color(D.hash2(x, y, 12 + k)))
+						out.trunk[1].append(Color.WHITE)
+						out.conifer[0].append(xf)
+						out.conifer[1].append(_conifer_color(D.hash2(x, y, 12 + k)))
 					else:
-						leaves.append(xf)
+						# aspens have pale bark
+						out.trunk[1].append(Color(2.6, 2.5, 2.3) if bio == D.BIOME.VALLEY else Color.WHITE)
+						out.leaf[0].append(xf)
 						var pal: Array = leaf_pal[season]
 						var col: Color = pal[0].lerp(pal[1], D.hash2(x, y, 12 + k))
-						if season == 0 and hh < 0.15:
-							col = Color("eab4c8")
-						elif season == 2 and hh < 0.35:
-							col = Color("a8452c").lerp(Color("c9772e"), hh * 2.0)
-						leaf_c.append(col)
-			elif t == D.T.ROCK and h < 0.45:
-				rocks.append(_xf(x + 0.2 + h2 * 0.6, y + 0.2 + h * 1.2, 0.8 + h2 * 1.6, h * TAU, 0.03))
-				rock_c.append(Color.WHITE.darkened(h2 * 0.2))
-			elif t == D.T.MEADOW and season != 3:
-				for k in 3:
-					flowers.append(_xf(x + D.hash2(x, y, 20 + k), y + D.hash2(x, y, 30 + k), 0.35 + h * 0.3, 0.0))
-					flower_c.append(bloom[int(D.hash2(x, y, 40 + k) * 4.0) % 4])
-	for p: Vector3 in _outer_trees:
-		var hh := D.hash2(int(p.x * 7.0), int(p.z * 7.0), 3)
-		var xf := Transform3D(Basis(Vector3.UP, hh * TAU).scaled(Vector3.ONE * (1.0 + hh * 0.9)), p - Vector3(0, 0.05, 0))
-		conifers.append(xf)
-		con_c.append(_conifer_color(hh))
-	_fill("trunk", trunks, trunk_c)
-	_fill("leaf", leaves, leaf_c)
-	_fill("conifer", conifers, con_c)
-	_fill("rock", rocks, rock_c)
-	_fill("flower", flowers, flower_c)
+						if bio == D.BIOME.DESERT:
+							col = Color("4a5a36")
+						elif season == 2 and bio != D.BIOME.VALLEY and hh < 0.4:
+							col = Color("9a3f26").lerp(Color("c9772e"), hh * 2.0)
+						out.leaf[1].append(col)
+			elif t == D.T.ROCK and bio != D.BIOME.DESERT and h < 0.3:
+				out.rock[0].append(_xf(x + h2, y + h * 3.0, 0.8 + h2 * 2.2, h * TAU, 0.05))
+				out.rock[1].append(Color.WHITE.darkened(h2 * 0.25))
+			elif bio == D.BIOME.DESERT and (t == D.T.GRASS or t == D.T.SAND):
+				var n := 3 if t == D.T.GRASS else (1 if h < 0.35 else 0)
+				for k in n:
+					out.bush[0].append(_xf(x + D.hash2(x, y, 20 + k), y + D.hash2(x, y, 30 + k), 0.6 + D.hash2(x, y, 40 + k) * 0.7, k * 2.0))
+					out.bush[1].append(Color("7d8a6a").lerp(Color("9a9a72"), h2))
+				if h < 0.06:
+					out.rock[0].append(_xf(x + h2, y + h * 9.0, 0.7 + h2 * 1.5, h * TAU, 0.04))
+					out.rock[1].append(Color(1.25, 0.72, 0.5))
+			elif bio == D.BIOME.WETLAND and t == D.T.GRASS:
+				for k in 4:
+					out.reed[0].append(_xf(x + D.hash2(x, y, 20 + k), y + D.hash2(x, y, 30 + k), 0.7 + D.hash2(x, y, 40 + k) * 0.7, k * 1.3))
+					out.reed[1].append(Color("6f8f3f").lerp(Color("a39a52"), D.hash2(x, y, 45 + k) * (1.0 if season >= 2 else 0.3)))
+			elif (t == D.T.GRASS or t == D.T.MEADOW) and bio != D.BIOME.DESERT:
+				if t == D.T.MEADOW and season != 3:
+					for k in 3:
+						out.flower[0].append(_xf(x + D.hash2(x, y, 20 + k), y + D.hash2(x, y, 30 + k), 0.3 + h * 0.3, 0.0))
+						out.flower[1].append(bloom[int(D.hash2(x, y, 40 + k) * 4.0) % 4])
+				if h2 < 0.22:
+					out.bush[0].append(_xf(x + h, y + h2 * 4.0, 0.5 + h * 0.6, h * 9.0))
+					out.bush[1].append(Color("3f6a34").lerp(Color("5f8a3f"), h) if season != 3 else Color("9aa39c"))
+				if bio == D.BIOME.ALPINE and h < 0.12:
+					out.rock[0].append(_xf(x + h2, y + h * 6.0, 0.6 + h2 * 1.6, h * TAU, 0.05))
+					out.rock[1].append(Color.WHITE.darkened(h2 * 0.2))
+	var mms: Dictionary = _regions[key]
+	for name in VEG:
+		_fill(mms[name], out[name][0], out[name][1])
+	if key == Vector2i.ZERO:
+		var xs: Array = []
+		var cs: Array = []
+		for p: Vector3 in _outer_trees:
+			var hh := D.hash2(int(p.x * 7.0), int(p.z * 7.0), 3)
+			var y := outer_at(p.x, p.z)
+			if y < 0.2:
+				continue
+			xs.append(Transform3D(Basis(Vector3.UP, hh * TAU).scaled(Vector3.ONE * (1.4 + hh * 1.2)), Vector3(p.x, y - 0.1, p.z)))
+			cs.append(_conifer_color(hh))
+		_fill(_mm["outer"], xs, cs)
 
 
 func _rebuild_small() -> void:
@@ -705,9 +949,9 @@ func _rebuild_small() -> void:
 		for k in world.litter[i]:
 			var px := x + 0.15 + D.hash2(x, y, 60 + k) * 0.7
 			var pz := y + 0.15 + D.hash2(x, y, 70 + k) * 0.7
-			xs.append(Transform3D(Basis(Vector3.UP, k * 1.3), Vector3(px, surface_at(px, pz) + 0.03, pz)))
+			xs.append(Transform3D(Basis(Vector3.UP, k * 1.3).scaled(Vector3.ONE * 0.6), Vector3(px, surface_at(px, pz) + 0.02, pz)))
 			cs.append(palette[(k + x) % 4])
-	_fill("litter", xs, cs)
+	_fill(_mm["litter"], xs, cs)
 	var land: Array = []
 	var land_c: Array = []
 	var wet: Array = []
@@ -719,25 +963,25 @@ func _rebuild_small() -> void:
 		var y := i / World.W
 		var v := world.invasive[i]
 		var is_water := world.is_water(world.terrain[i])
-		for k in int(2 + v * 5.0):
-			var px := x + 0.1 + D.hash2(x, y, 40 + k) * 0.8
-			var pz := y + 0.1 + D.hash2(x, y, 50 + k) * 0.8
+		for k in int(3 + v * 7.0):
+			var px := x + 0.05 + D.hash2(x, y, 40 + k) * 0.9
+			var pz := y + 0.05 + D.hash2(x, y, 50 + k) * 0.9
 			if is_water:
-				wet.append(Transform3D(Basis(Vector3.UP, k * 0.9).scaled(Vector3.ONE * (0.7 + v)), Vector3(px, 0.005 + k * 0.002, pz)))
+				wet.append(Transform3D(Basis(Vector3.UP, k * 0.9).scaled(Vector3.ONE * (0.7 + v)), Vector3(px, world.wlevel[i] + 0.006 + k * 0.002, pz)))
 				wet_c.append(Color.WHITE)
 			else:
-				land.append(_xf(px, pz, 0.8 + v * 0.7, k * 1.1))
+				land.append(_xf(px, pz, 0.6 + v * 0.6, k * 1.1))
 				land_c.append(Color.WHITE)
-	_fill("thistle", land, land_c)
-	_fill("milfoil", wet, wet_c)
+	_fill(_mm["thistle"], land, land_c)
+	_fill(_mm["milfoil"], wet, wet_c)
 	var ox: Array = []
 	var oc: Array = []
 	for t in _orchid_tiles:
 		var hp := world.rare[World.ti(t)]
 		if hp > 0.0:
-			ox.append(_xf(t.x + 0.5, t.y + 0.5, 1.0 + hp * 0.5, 0.0))
+			ox.append(_xf(t.x + 0.5, t.y + 0.5, 0.7 + hp * 0.4, 0.0))
 			oc.append(Color.WHITE.lerp(Color(0.6, 0.55, 0.5), 1.0 - hp))
-	_fill("orchid", ox, oc)
+	_fill(_mm["orchid"], ox, oc)
 	var fx: Array = []
 	var fc: Array = []
 	for i: int in world.fire_tiles.keys():
@@ -746,13 +990,13 @@ func _rebuild_small() -> void:
 		for k in 4:
 			var px := x + 0.15 + D.hash2(x, y, 80 + k) * 0.7
 			var pz := y + 0.15 + D.hash2(x, y, 90 + k) * 0.7
-			fx.append(_xf(px, pz, 0.7 + D.hash2(x, y, 95 + k) * 0.9, k * 1.7))
+			fx.append(_xf(px, pz, 1.4 + D.hash2(x, y, 95 + k) * 1.8, k * 1.7))
 			fc.append(Color(1.0, 0.75 + D.hash2(x, y, 99 + k) * 0.25, 0.6))
-	_fill("flame", fx, fc)
+	_fill(_mm["flame"], fx, fc)
 	fire_light.visible = not world.fire_tiles.is_empty()
 	if fire_light.visible:
 		var fi: int = world.fire_tiles.keys()[0]
-		fire_light.position = Vector3(fi % World.W + 0.5, height_at(fi % World.W + 0.5, fi / World.W + 0.5) + 1.5, fi / World.W + 0.5)
+		fire_light.position = Vector3(fi % World.W + 0.5, height_at(fi % World.W + 0.5, fi / World.W + 0.5) + 3.0, fi / World.W + 0.5)
 
 
 func _sync_structures() -> void:
@@ -779,24 +1023,28 @@ func _sync_structures() -> void:
 			for dy in [0.15, 1.0, 1.85]:
 				for dx in [0.15, 1.0, 1.85]:
 					top = maxf(top, height_at(st.x + dx, st.y + dy))
+		if world.wlevel[World.ti(st)] != World.NO_WATER:
+			top = maxf(top, world.wlevel[World.ti(st)] + DECK)
 		holder.position = Vector3(cxp, top + 0.03, czp)
 		var mi := MeshInstance3D.new()
-		mi.mesh = Models.structure(kind)
-		mi.material_override = mat
+		var ext := Models.external(str(D.B.keys()[kind]).to_lower())
+		mi.mesh = ext if ext != null else Models.structure(kind)
+		if ext == null:
+			mi.material_override = mat
 		holder.add_child(mi)
 		if not (kind in NO_FOUNDATION):
 			var base := MeshInstance3D.new()
 			var box := BoxMesh.new()
-			box.size = Vector3(sz.x * 0.9, 2.5, sz.y * 0.9) if sz.x > 1 else Vector3(0.84, 2.5, 0.84)
+			box.size = Vector3(sz.x * 0.9, 4.0, sz.y * 0.9) if sz.x > 1 else Vector3(0.84, 4.0, 0.84)
 			base.mesh = box
-			base.position = Vector3(0, -1.25, 0)
+			base.position = Vector3(0, -2.0, 0)
 			var bm := StandardMaterial3D.new()
-			bm.albedo_color = Color("7c766c")
+			bm.albedo_color = Color("5f5a52")
 			bm.roughness = 1.0
 			base.material_override = bm
 			holder.add_child(base)
 		var wins := Models.windows(kind)
-		if wins.get_surface_count() > 0:
+		if ext == null and wins.get_surface_count() > 0:
 			var wi := MeshInstance3D.new()
 			wi.mesh = wins
 			wi.material_override = win_mat
@@ -805,10 +1053,10 @@ func _sync_structures() -> void:
 		if kind in LIT:
 			var lamp := OmniLight3D.new()
 			lamp.light_color = Color(1.0, 0.72, 0.4) if kind != D.B.CAMP else Color(1.0, 0.55, 0.22)
-			lamp.omni_range = 4.5 if sz.x > 1 else 3.0
+			lamp.omni_range = 5.0 if sz.x > 1 else 3.2
 			lamp.omni_attenuation = 1.4
 			lamp.position = Vector3(-0.3, 0.3, 0.42) if kind == D.B.CAMP else Vector3(0, 0.45, sz.y * 0.5 + 0.25)
-			lamp.light_energy = _night * 2.2
+			lamp.light_energy = _night * 2.6
 			lamp.visible = _night > 0.03
 			holder.add_child(lamp)
 			_lights.append(lamp)
@@ -824,29 +1072,30 @@ func _sync_structures() -> void:
 func _build_landmarks() -> void:
 	for lm in world.landmarks:
 		var t: Vector2i = lm.tile
-		var pos := Vector3(t.x + 0.5, maxf(height_at(t.x + 0.5, t.y + 0.5), 0.0), t.y + 0.5)
+		var pos := Vector3(t.x + 0.5, top_at(t.x + 0.5, t.y + 0.5), t.y + 0.5)
 		var mi := MeshInstance3D.new()
 		mi.mesh = Models.landmark(lm.kind)
 		mi.material_override = mat
 		mi.position = pos
-		if lm.kind == "grove":
-			mi.scale = Vector3(1.6, 1.6, 1.6)
-		add_child(mi)
-		var label := Label3D.new()
-		label.text = lm.name
-		label.font = font
-		label.font_size = 56
-		label.outline_size = 16
-		label.pixel_size = 0.013
-		label.modulate = Color("fff8dc")
-		label.outline_modulate = Color(0.08, 0.12, 0.1, 0.9)
-		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		label.no_depth_test = true
-		label.render_priority = 5
-		var lift := 1.6
+		var lift := 3.0
 		match lm.kind:
-			"grove": lift = 5.2
-			"summit": lift = 1.9
-			"lake": lift = 0.9
+			"grove":
+				mi.scale = Vector3.ONE * 3.2
+				lift = 11.0
+			"falls":
+				mi.scale = Vector3.ONE * 2.2
+				lift = 5.0
+			"spring":
+				mi.scale = Vector3.ONE * 1.8
+			"arch":
+				mi.scale = Vector3.ONE * 2.6
+				lift = 7.5
+			"summit":
+				mi.scale = Vector3.ONE * 2.0
+				lift = 3.5
+			"lake":
+				lift = 1.5
+		add_child(mi)
+		var label := _label(lm.name, 19)
 		label.position = pos + Vector3(0, lift, 0)
 		add_child(label)

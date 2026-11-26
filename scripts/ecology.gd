@@ -85,6 +85,10 @@ func status(i: int) -> String:
 	return "Critical"
 
 
+func zone_dry_desert() -> bool:
+	return g.zone_dry[D.BIOME.DESERT] >= 7
+
+
 ## 0 = never studied, 1 = rough impressions, 2 = well understood.
 func known(i: int) -> int:
 	if know[i] >= 0.5: return 2
@@ -134,6 +138,11 @@ func _compute_caps() -> void:
 			var sp: Dictionary = D.SPECIES[si]
 			if si == og and w.trees[i] == 0:
 				continue
+			if sp.has("biomes"):
+				if not (w.biome[i] in sp.biomes):
+					continue
+			elif w.biome[i] == D.BIOME.DESERT and (D.T.WATER in sp.habitat):
+				continue # shoreline species do not live on dry desert sand
 			caps[si] += pow(q, 1.0 + float(sp.sens) * 0.6) * float(sp.density)
 			if q > 0.3 and (i % 3 == 0 or sp.vis > 0 and i % 2 == 0):
 				(hab_tiles[si] as Array).append(Vector2i(i % World.W, i / World.W))
@@ -141,6 +150,7 @@ func _compute_caps() -> void:
 	caps[_ix["trout"]] *= 0.25 + 0.75 * water_quality
 	caps[_ix["salamander"]] *= 0.4 + 0.6 * water_quality
 	caps[_ix["beaver"]] *= 0.6 + 0.4 * water_quality
+	caps[_ix["heron"]] *= 0.4 + 0.6 * water_quality
 	var orchid := 0.0
 	for i in n:
 		orchid += w.rare[i]
@@ -169,6 +179,10 @@ func _apply_food_web() -> void:
 	var warm: float = g.climate
 	caps[_ix["trout"]] *= 1.0 - minf(0.5, 0.06 * warm)
 	caps[_ix["goat"]] *= 1.0 - minf(0.4, 0.04 * warm)
+	caps[_ix["pika"]] *= 1.0 - minf(0.85, 0.14 * warm)
+	caps[_ix["heron"]] *= 0.7 + 0.3 * minf(1.0, trout)
+	if zone_dry_desert():
+		caps[_ix["bighorn"]] *= 0.8
 	if g.drought:
 		caps[_ix["wildflower"]] *= 0.8
 		caps[_ix["trout"]] *= 0.85
@@ -188,6 +202,8 @@ func _apply_food_web() -> void:
 			g.discover("pollinators", "Pollinator decline", "Native bees are disappearing along with the wildflowers they feed on. Each makes the other's decline worse.")
 		if water_quality < 0.8:
 			g.discover("runoff", "Polluted runoff", "Oil, litter and sediment are washing off roads and parking into the water. Trout and salamanders are the first to suffer. Keep paving back from shorelines.")
+		if warm >= 0.3 and r("pika") < 0.85:
+			g.discover("pika", "Running out of mountain", "Pikas are vanishing from the lower talus slopes as summers warm. They can only move uphill, and the peaks are a dead end.")
 		if warm >= 0.3:
 			g.discover("climate", "A warming climate", "Summers are getting hotter and the snowpack thinner each year. Cold-water trout and mountain goats have less room; droughts and fires are more likely.")
 		if scars > 5:
@@ -242,6 +258,13 @@ func daily() -> void:
 	_compute_health()
 
 
+## Recomputes derived values after loading a save.
+func daily_refresh() -> void:
+	_compute_caps()
+	_sync_animals()
+	_compute_health()
+
+
 func _update_orchids() -> void:
 	for y in World.H:
 		for x in World.W:
@@ -273,7 +296,7 @@ func _update_orchids() -> void:
 ## An ecologist finished a field survey at `t`: learn about whatever lives there.
 func survey(t: Vector2i) -> void:
 	surveys += 1
-	var gain := 0.022 * (1.5 if g.has_tech("monitor") else 1.0)
+	var gain := 0.012 * (1.5 if g.has_tech("monitor") else 1.0)
 	var seen_terrain := {}
 	var orchid_near := false
 	for dy in range(-5, 6):
@@ -327,7 +350,6 @@ func seen_invasive_count() -> int:
 # ------------------------------------------------------- invasives and fire
 
 func hourly() -> void:
-	var weather: String = g.weather
 	var active: int = g.visitors.groups.size()
 	if g.day >= 3 and active > 0:
 		var p := 0.012 * (1.0 + active / 25.0)
@@ -336,14 +358,13 @@ func hourly() -> void:
 		if rng.randf() < p:
 			_introduce()
 	var keys := w.invasive_tiles.keys()
-	var spread := 0.05 * (1.6 if weather == "rain" else 1.0)
 	for i: int in keys:
 		var v := minf(1.0, w.invasive[i] + 0.035)
 		w.invasive[i] = v
 		var t := Vector2i(i % World.W, i / World.W)
 		if v >= 0.85 and w.inv_seen[i] == 0:
 			_detect(t) # too big to miss: visitors report it
-		if v > 0.5 and rng.randf() < spread and keys.size() < 400:
+		if v > 0.5 and rng.randf() < (0.08 if g.weather_at(t) == "rain" else 0.05) and keys.size() < 700:
 			var nb: Vector2i = t + World.DIRS[rng.randi() % 4]
 			if _can_invade(nb, w.is_water(w.terrain[i])):
 				w.set_invasive(nb, 0.2)
@@ -355,13 +376,14 @@ func hourly() -> void:
 			g.say("Known invasive patches now cover %d tiles and are spreading. Send ecologists or use the Remove Invasives tool." % seen, "warn")
 	else:
 		_invasive_warned = 0
-	_fire_tick(weather)
-	if weather == "rain" or weather == "storm":
-		# rain washes whatever is on paved ground toward the water
-		var dirty := 0
-		for t in w.lot_tiles:
-			if w._near_terrain(t.x, t.y, 3, [D.T.WATER, D.T.DEEP]):
-				dirty += 1
+	_fire_tick()
+	# rain washes whatever is on paved ground toward the water
+	var dirty := 0
+	for t in w.lot_tiles:
+		var wt: String = g.weather_at(t)
+		if (wt == "rain" or wt == "storm") and w._near_terrain(t.x, t.y, 3, [D.T.WATER, D.T.DEEP]):
+			dirty += 1
+	if dirty > 0:
 		runoff = minf(0.6, runoff + dirty * 0.0025 + w.litter_tiles.size() * 0.0006)
 
 
@@ -410,42 +432,44 @@ func put_out(t: Vector2i) -> void:
 	w.changed.emit(Rect2i(t, Vector2i(1, 1)))
 
 
-func _fire_tick(weather: String) -> void:
-	var wet := weather == "rain" or weather == "snow"
-	if wet:
-		for i: int in w.fire_tiles.keys():
-			put_out(Vector2i(i % World.W, i / World.W))
-		return
-	# ignition: lightning, or careless campfires when it is hot and dry
-	var p := 0.0
-	var human := false
-	if weather == "storm":
-		p = 0.05
-	elif g.drought or weather == "heat":
-		p = 0.012 * (w.count_kind(D.B.CAMP) + w.count_kind(D.B.PICNIC) * 0.5)
-		human = true
-	if g.season() == 3:
-		p = 0.0
-	if p > 0.0 and rng.randf() < p and w.fire_tiles.is_empty():
-		for attempt in 30:
+func _fire_tick() -> void:
+	# rain and snow put fires out, zone by zone
+	for i: int in w.fire_tiles.keys():
+		var t := Vector2i(i % World.W, i / World.W)
+		var wt: String = g.weather_at(t)
+		if wt == "rain" or wt == "snow":
+			put_out(t)
+	# ignition: lightning, or careless campfires where it is hot and dry
+	if g.season() != 3 and w.fire_tiles.is_empty():
+		for attempt in 3:
 			var t := Vector2i(rng.randi_range(2, World.W - 3), rng.randi_range(2, World.H - 3))
-			if human:
+			var wt: String = g.weather_at(t)
+			var human := false
+			var p := 0.0
+			if wt == "storm":
+				p = 0.02
+			elif wt == "heat" or g.drought_at(t):
 				var srcs: Array = []
 				for s in w.structures.values():
 					if s.kind == D.B.CAMP or s.kind == D.B.PICNIC:
 						srcs.append(s.tile)
 				if srcs.is_empty():
-					break
+					continue
 				var st: Vector2i = srcs[rng.randi() % srcs.size()]
 				t = st + Vector2i(rng.randi_range(-2, 3), rng.randi_range(-2, 3))
-			if World.inb(t.x, t.y) and w.trees[World.ti(t)] > 0 and w.build[World.ti(t)] == D.B.NONE:
+				if not World.inb(t.x, t.y) or not (g.weather_at(t) == "heat" or g.drought_at(t)):
+					continue
+				p = 0.006 * srcs.size()
+				human = true
+			if p > 0.0 and rng.randf() < p and w.trees[World.ti(t)] > 0 and w.build[World.ti(t)] == D.B.NONE:
 				ignite(t)
-				g.say("Wildfire! %s Rangers will fight it; rain would stop it." % ("An escaped campfire in dry conditions." if human else "A lightning strike."), "bad", t)
+				g.say("Wildfire in the %s! %s Rangers will fight it; rain would stop it." % [D.BIOME_NAMES[w.biome[World.ti(t)]].to_lower(),
+					"An escaped campfire in dry conditions." if human else "A lightning strike."], "bad", t)
 				break
-	var chance := 0.42 if (g.drought or weather == "heat") else 0.24
 	for i: int in w.fire_tiles.keys():
 		var t := Vector2i(i % World.W, i / World.W)
-		if w.fire_tiles.size() < 160:
+		var chance := 0.42 if (g.drought_at(t) or g.weather_at(t) == "heat") else 0.24
+		if w.fire_tiles.size() < 260:
 			for d in World.DIRS:
 				var nb := t + d
 				if World.inb(nb.x, nb.y) and rng.randf() < chance:
@@ -588,9 +612,11 @@ func update(dt: float) -> void:
 		if a.timer > 0.0:
 			a.timer -= dt
 			a.moving = false
-			a.graze = id == "elk" or id == "goat"
+			a.graze = id == "elk" or id == "goat" or id == "bighorn"
 			if a.graze: a.doing = "grazing" if not night else "bedded down"
 			elif id == "beaver": a.doing = "gnawing and building"
+			elif id == "heron": a.doing = "standing motionless, fishing"
+			elif id == "pika": a.doing = "gathering hay for winter"
 			elif id == "trout": a.doing = "holding in the current"
 			else: a.doing = "resting"
 			continue
@@ -694,6 +720,8 @@ func _pick_target(a: Animal, sp: Dictionary) -> void:
 		var i := World.ti(t)
 		if not (w.terrain[i] in sp.habitat) or w.build[i] != D.B.NONE or w.fire[i] > 0:
 			continue
+		if sp.has("biomes") and not (w.biome[i] in sp.biomes):
+			continue
 		if id == "trout":
 			var mid := World.tile_of((a.pos + World.center(t)) * 0.5)
 			if not w.is_water(w.terrain[World.ti(mid)]):
@@ -701,7 +729,7 @@ func _pick_target(a: Animal, sp: Dictionary) -> void:
 		var q := w.quality[i] + rng.randf() * 0.4
 		if thirsty and w._near_terrain(t.x, t.y, 1, [D.T.WATER]):
 			q += 1.0
-		if g.weather == "rain" and w.terrain[i] == D.T.FOREST:
+		if g.weather_at(t) == "rain" and w.terrain[i] == D.T.FOREST:
 			q += 0.4 # shelter under the trees
 		if q > best_q:
 			best_q = q
@@ -739,6 +767,6 @@ func _sightings() -> void:
 					g.comment("We saw wildlife up close")
 			if id == "bear":
 				g.staffing.bear_encounter(gr, World.tile_of(p))
-			elif (id == "elk" or id == "fox" or id == "goat" or id == "wolf") and d2 < 62.0 * 62.0 and a.flee <= 0.0:
+			elif (id == "elk" or id == "fox" or id == "goat" or id == "wolf" or id == "bighorn" or id == "heron" or id == "pika") and d2 < 62.0 * 62.0 and a.flee <= 0.0:
 				a.prey = null
 				_scare(a, p, 2.0) # people push wary animals off their feeding grounds

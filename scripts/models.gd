@@ -150,7 +150,7 @@ static func trunk() -> ArrayMesh:
 	if _cache.has("trunk"):
 		return _cache["trunk"]
 	var m := MeshBuilder.new()
-	m.cyl(V(0, -0.1, 0), 0.05, 0.5, 6, Color("5b4433"))
+	m.cyl(V(0, -0.1, 0), 0.035, 0.75, 6, Color("4a3a2c"))
 	_cache["trunk"] = m.commit()
 	return _cache["trunk"]
 
@@ -159,9 +159,10 @@ static func leaf() -> ArrayMesh:
 	if _cache.has("leaf"):
 		return _cache["leaf"]
 	var m := MeshBuilder.new()
-	m.blob(V(0, 0.62, 0), V(0.36, 0.34, 0.36), Color(0.9, 0.9, 0.9), 8)
-	m.blob(V(0.14, 0.86, 0.06), V(0.26, 0.24, 0.26), Color.WHITE, 7)
-	m.blob(V(-0.16, 0.8, -0.1), V(0.22, 0.2, 0.22), Color(0.95, 0.95, 0.95), 7)
+	m.blob_smooth(V(0, 0.66, 0), V(0.3, 0.36, 0.3), Color(0.82, 0.82, 0.82))
+	m.blob_smooth(V(0.13, 0.92, 0.06), V(0.22, 0.26, 0.22), Color.WHITE)
+	m.blob_smooth(V(-0.15, 0.84, -0.1), V(0.2, 0.22, 0.2), Color(0.9, 0.9, 0.9))
+	m.blob_smooth(V(0.02, 1.12, -0.02), V(0.16, 0.18, 0.16), Color(1.05, 1.05, 1.05))
 	_cache["leaf"] = m.commit()
 	return _cache["leaf"]
 
@@ -170,11 +171,11 @@ static func conifer() -> ArrayMesh:
 	if _cache.has("conifer"):
 		return _cache["conifer"]
 	var m := MeshBuilder.new()
-	var tiers := 5
+	var tiers := 6
 	for k in tiers:
 		var f := float(k) / tiers
-		var shade := 0.72 + f * 0.3
-		m.cone_smooth(V(0, 0.22 + f * 1.0, 0), 0.34 * (1.0 - f * 0.72), 0.5 - f * 0.12, 9,
+		var shade := 0.62 + f * 0.42
+		m.cone_smooth(V(0, 0.2 + f * 1.25, 0), 0.3 * (1.0 - f * 0.78), 0.52 - f * 0.14, 8,
 			Color(shade * 0.82, shade * 0.82, shade * 0.82), Color(shade, shade, shade))
 	_cache["conifer"] = m.commit()
 	return _cache["conifer"]
@@ -221,6 +222,67 @@ static func windows(kind: int) -> ArrayMesh:
 			m.block(V(-0.62, 0.14, 0.215), V(0.12, 0.12, 0.02), w)
 	_cache[key] = m.commit()
 	return _cache[key]
+
+static var _ext_cache := {}
+
+## Loads models/<name>.glb if the player has supplied one (see models/README.md).
+static func external(name: String) -> Mesh:
+	if _ext_cache.has(name):
+		return _ext_cache[name]
+	var found: Mesh = null
+	var path := "res://models/%s.glb" % name
+	if ResourceLoader.exists(path):
+		var scene = load(path)
+		if scene is PackedScene:
+			var root: Node = scene.instantiate()
+			var stack: Array = [root]
+			while not stack.is_empty() and found == null:
+				var node: Node = stack.pop_back()
+				if node is MeshInstance3D and node.mesh != null:
+					found = node.mesh
+				stack.append_array(node.get_children())
+			root.free()
+	_ext_cache[name] = found
+	return found
+
+static func bush() -> ArrayMesh:
+	if _cache.has("bush"):
+		return _cache["bush"]
+	var m := MeshBuilder.new()
+	m.blob_smooth(V(0, 0.07, 0), V(0.16, 0.11, 0.15), Color.WHITE)
+	m.blob_smooth(V(0.11, 0.05, 0.06), V(0.1, 0.08, 0.1), Color(0.85, 0.85, 0.85))
+	m.blob_smooth(V(-0.09, 0.05, -0.07), V(0.1, 0.07, 0.09), Color(0.92, 0.92, 0.92))
+	_cache["bush"] = m.commit()
+	return _cache["bush"]
+
+static func reed() -> ArrayMesh:
+	if _cache.has("reed"):
+		return _cache["reed"]
+	var m := MeshBuilder.new()
+	for k in 6:
+		var a := k * 1.05
+		var o := V(cos(a) * 0.07, 0, sin(a) * 0.07)
+		m.cone(o, 0.018, 0.28 + (k % 3) * 0.07, 3, Color.WHITE)
+		if k % 2 == 0:
+			m.box(o + V(0, 0.27 + (k % 3) * 0.07, 0), V(0.025, 0.07, 0.025), Color(0.5, 0.36, 0.22))
+	_cache["reed"] = m.commit()
+	return _cache["reed"]
+
+static func entrance_sign() -> ArrayMesh:
+	if _cache.has("esign"):
+		return _cache["esign"]
+	var m := MeshBuilder.new()
+	m.block(V(-0.55, 0, 0), V(0.14, 0.9, 0.14), Color("6b5a4a"))
+	m.block(V(0.55, 0, 0), V(0.14, 0.9, 0.14), Color("6b5a4a"))
+	m.block(V(-0.55, 0, 0), V(0.3, 0.3, 0.3), Color("8f887b"))
+	m.block(V(0.55, 0, 0), V(0.3, 0.3, 0.3), Color("8f887b"))
+	m.block(V(0, 0.42, 0), V(1.2, 0.46, 0.08), Color("5a3a22"))
+	m.block(V(0, 0.47, 0.045), V(1.05, 0.34, 0.01), Color("7a4f2c"))
+	m.block(V(0, 0.66, 0.05), V(0.8, 0.06, 0.012), Color("f3e2a8"))
+	m.block(V(0, 0.56, 0.05), V(0.6, 0.04, 0.012), Color("f3e2a8"))
+	m.cone(V(-0.4, 0.5, 0.05), 0.08, 0.2, 5, Color("3f8f5a"))
+	_cache["esign"] = m.commit()
+	return _cache["esign"]
 
 static func flame() -> ArrayMesh:
 	if _cache.has("flame"):
@@ -377,6 +439,8 @@ const LEGS := {
 	"fox": [[-0.08, 0.08], 0.03, 0.09, 0.03, "5a3320"],
 	"goat": [[-0.09, 0.09], 0.05, 0.13, 0.035, "d8d2c6"],
 	"wolf": [[-0.12, 0.12], 0.045, 0.15, 0.04, "6f7378"],
+	"bighorn": [[-0.1, 0.1], 0.05, 0.15, 0.04, "8a6f52"],
+	"heron": [[0.0], 0.03, 0.2, 0.015, "5a5a4a"],
 }
 
 static func leg(id: String) -> ArrayMesh:
@@ -473,6 +537,28 @@ static func animal(id: String) -> ArrayMesh:
 			m.block(V(0.15, 0.38, 0.03), V(0.02, 0.08, 0.02), Color("3a3a3a"))
 			m.block(V(0.15, 0.38, -0.03), V(0.02, 0.08, 0.02), Color("3a3a3a"))
 			m.block(V(-0.16, 0.24, 0), V(0.03, 0.04, 0.04), fur)
+		"bighorn":
+			var fur := Color("b08a62")
+			m.block(V(0, 0.15, 0), V(0.34, 0.18, 0.17), fur)
+			m.block(V(-0.16, 0.2, 0), V(0.03, 0.1, 0.13), Color("efe6d6"))
+			m.block(V(0.18, 0.28, 0), V(0.12, 0.13, 0.11), fur)
+			m.block(V(0.25, 0.28, 0), V(0.04, 0.06, 0.07), Color("efe6d6"))
+			for s in [-1.0, 1.0]:
+				m.block(V(0.14, 0.4, 0.07 * s), V(0.1, 0.04, 0.04), Color("6b5a44"))
+				m.block(V(0.09, 0.34, 0.09 * s), V(0.04, 0.09, 0.04), Color("6b5a44"))
+				m.block(V(0.14, 0.31, 0.1 * s), V(0.07, 0.035, 0.035), Color("6b5a44"))
+		"heron":
+			m.block(V(0, 0.2, 0), V(0.2, 0.09, 0.09), Color("7f93a6"))
+			m.block(V(-0.12, 0.2, 0), V(0.1, 0.05, 0.07), Color("5f7286"))
+			m.block(V(0.1, 0.27, 0), V(0.03, 0.17, 0.03), Color("c9d3dc"))
+			m.block(V(0.12, 0.43, 0), V(0.07, 0.045, 0.045), Color("e9eef2"))
+			m.block(V(0.2, 0.44, 0), V(0.11, 0.018, 0.018), Color("e0a82e"))
+			m.block(V(0.09, 0.47, 0), V(0.06, 0.012, 0.02), Color("2a3340"))
+		"pika":
+			m.blob(V(0, 0.045, 0), V(0.085, 0.055, 0.06), Color("9a7f5f"), 6)
+			m.blob(V(0.075, 0.06, 0), V(0.045, 0.04, 0.045), Color("9a7f5f"), 6)
+			m.block(V(0.07, 0.09, 0.03), V(0.02, 0.03, 0.025), Color("7a6248"))
+			m.block(V(0.07, 0.09, -0.03), V(0.02, 0.03, 0.025), Color("7a6248"))
 		"beaver":
 			m.block(V(0, 0, 0), V(0.24, 0.11, 0.14), Color("8a5c36"))
 			m.block(V(0.14, 0.03, 0), V(0.1, 0.1, 0.11), Color("8a5c36"))

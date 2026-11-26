@@ -3,8 +3,12 @@ extends RefCounted
 ## Static game data: terrain, buildings, visitors, species, research, grants.
 
 const TILE := 32
-const MAP_W := 88
-const MAP_H := 60
+const MAP_W := 160
+const MAP_H := 120
+
+## Large regions of the park, each with its own look, wildlife and weather.
+enum BIOME { FOREST, VALLEY, WETLAND, DESERT, ALPINE }
+const BIOME_NAMES := ["Montane forest", "Grassy valley", "Wetland", "Red-rock desert", "Alpine"]
 
 enum T { DEEP, WATER, SAND, GRASS, MEADOW, FOREST, ROCK, PEAK }
 enum B {
@@ -88,24 +92,30 @@ const VTYPES := [
 # density: animals per unit of habitat quality. sens: sensitivity to disturbance.
 # vis: how many walk around the map at a healthy population.
 const SPECIES := [
-	{id = "elk", name = "Elk", kind = "animal", habitat = [T.GRASS, T.MEADOW, T.FOREST], density = 0.05, sens = 0.5, growth = 0.12, vis = 14, speed = 22.0,
+	{id = "elk", name = "Elk", kind = "animal", habitat = [T.GRASS, T.MEADOW, T.FOREST], density = 0.05, sens = 0.5, growth = 0.12, vis = 34, speed = 22.0,
 		desc = "Grazes meadows and forest edges. Fairly tolerant of people."},
-	{id = "bear", name = "Black Bear", kind = "animal", habitat = [T.FOREST], density = 0.012, sens = 1.2, growth = 0.06, vis = 5, speed = 20.0,
+	{id = "bear", name = "Black Bear", kind = "animal", habitat = [T.FOREST], density = 0.012, sens = 1.2, growth = 0.06, vis = 11, speed = 20.0,
 		desc = "Needs big, quiet forest. Drawn to litter, which leads to dangerous encounters."},
-	{id = "fox", name = "Red Fox", kind = "animal", habitat = [T.GRASS, T.MEADOW, T.FOREST, T.SAND], density = 0.015, sens = 0.3, growth = 0.15, vis = 7, speed = 34.0,
+	{id = "fox", name = "Red Fox", kind = "animal", habitat = [T.GRASS, T.MEADOW, T.FOREST, T.SAND], density = 0.015, sens = 0.3, growth = 0.15, vis = 15, speed = 34.0,
 		desc = "Adaptable hunter of meadows and edges."},
-	{id = "goat", name = "Mountain Goat", kind = "animal", habitat = [T.ROCK, T.PEAK], density = 0.03, sens = 1.0, growth = 0.08, vis = 7, speed = 16.0,
+	{id = "goat", name = "Mountain Goat", kind = "animal", habitat = [T.ROCK, T.PEAK], biomes = [BIOME.ALPINE, BIOME.FOREST, BIOME.VALLEY], density = 0.03, sens = 1.0, growth = 0.08, vis = 12, speed = 16.0,
 		desc = "Lives on crags and peaks. Disturbed by climbing areas and summit crowds."},
-	{id = "eagle", name = "Bald Eagle", kind = "animal", habitat = [T.WATER, T.DEEP, T.SAND], density = 0.01, sens = 1.0, growth = 0.07, vis = 4, speed = 60.0,
+	{id = "eagle", name = "Bald Eagle", kind = "animal", habitat = [T.WATER, T.DEEP, T.SAND], density = 0.01, sens = 1.0, growth = 0.07, vis = 8, speed = 60.0,
 		desc = "Nests near clean water and depends on healthy trout."},
-	{id = "beaver", name = "Beaver", kind = "animal", habitat = [T.WATER, T.SAND], density = 0.012, sens = 0.7, growth = 0.1, vis = 4, speed = 10.0,
+	{id = "beaver", name = "Beaver", kind = "animal", habitat = [T.WATER, T.SAND], density = 0.012, sens = 0.7, growth = 0.1, vis = 9, speed = 10.0,
 		desc = "Ecosystem engineer of rivers and lake shores."},
-	{id = "trout", name = "Cutthroat Trout", kind = "animal", habitat = [T.WATER, T.DEEP], density = 0.12, sens = 0.8, growth = 0.2, vis = 16, speed = 14.0,
+	{id = "trout", name = "Cutthroat Trout", kind = "animal", habitat = [T.WATER, T.DEEP], density = 0.12, sens = 0.8, growth = 0.2, vis = 34, speed = 14.0,
 		desc = "Needs cold, clean water. Hurt by runoff, litter and invasive milfoil."},
-	{id = "salamander", name = "Tiger Salamander", kind = "animal", habitat = [T.SAND, T.WATER], density = 0.08, sens = 1.6, growth = 0.18, vis = 7, speed = 6.0,
+	{id = "salamander", name = "Tiger Salamander", kind = "animal", habitat = [T.SAND, T.WATER], density = 0.08, sens = 1.6, growth = 0.18, vis = 12, speed = 6.0,
 		desc = "Indicator species: the first to vanish when shorelines are polluted or developed."},
-	{id = "wolf", name = "Gray Wolf", kind = "animal", habitat = [T.GRASS, T.MEADOW, T.FOREST, T.ROCK], density = 0.006, sens = 1.5, growth = 0.07, vis = 5, speed = 30.0,
+	{id = "wolf", name = "Gray Wolf", kind = "animal", habitat = [T.GRASS, T.MEADOW, T.FOREST, T.ROCK], density = 0.006, sens = 1.5, growth = 0.07, vis = 10, speed = 30.0,
 		desc = "Apex predator that needs large, undisturbed country. Keeps elk numbers and behaviour in check."},
+	{id = "bighorn", name = "Desert Bighorn", kind = "animal", habitat = [T.ROCK, T.SAND, T.GRASS], biomes = [BIOME.DESERT], density = 0.012, sens = 1.1, growth = 0.08, vis = 10, speed = 18.0,
+		desc = "Sure-footed sheep of the mesas and canyons. Needs scarce desert water and room away from people."},
+	{id = "heron", name = "Great Blue Heron", kind = "animal", habitat = [T.WATER, T.GRASS, T.SAND], biomes = [BIOME.WETLAND], density = 0.03, sens = 1.2, growth = 0.1, vis = 9, speed = 8.0,
+		desc = "Patient wading hunter of the marshes. Abandons nesting colonies that are disturbed."},
+	{id = "pika", name = "American Pika", kind = "animal", habitat = [T.ROCK, T.MEADOW, T.GRASS], biomes = [BIOME.ALPINE], density = 0.08, sens = 0.8, growth = 0.2, vis = 10, speed = 9.0,
+		desc = "Tiny relative of rabbits living among alpine boulders. Cannot survive heat."},
 	{id = "bee", name = "Native Bees", kind = "insect", habitat = [T.MEADOW, T.GRASS], density = 2.0, sens = 0.5, growth = 0.3, vis = 0, speed = 0.0,
 		desc = "Pollinators. They need wildflowers, and wildflowers need them."},
 	{id = "wildflower", name = "Wildflowers", kind = "plant", habitat = [T.MEADOW], density = 1.0, sens = 0.6, growth = 0.25, vis = 0, speed = 0.0,
@@ -128,6 +138,9 @@ const NOTES := {
 	"salamander": "Amphibians breathe partly through their skin, so they absorb pollutants readily. Their decline is an early warning.",
 	"wolf": "Wolves change where elk feed as well as how many there are. Their return lets streamside plants recover.",
 	"bee": "Most wildflowers cannot set seed without pollinators. Lose the bees and the meadows fade a few seasons later.",
+	"bighorn": "Bighorn pick up fatal pneumonia from domestic sheep and avoid water holes that people crowd. In a desert, water decides everything.",
+	"heron": "Wetlands filter water, soak up floods and feed more species per acre than any other habitat here. Herons are the visible tip of that food chain.",
+	"pika": "Pikas overheat within hours above about 25 degrees C. As the climate warms they retreat upslope until there is no mountain left.",
 	"wildflower": "Meadows depend on pollinators, on not being overgrazed, and on occasional fire to hold back the forest.",
 	"oldgrowth": "Old forest takes centuries to form. Low-intensity fire clears the understory and can actually help it; clearing does not.",
 	"orchid": "Lady's slipper orchids need a specific soil fungus to germinate and take years to flower, so lost colonies rarely return.",
@@ -166,6 +179,7 @@ const LANDMARK_NAMES := {
 	"falls": ["Eagle Falls", "Bridal Veil Falls", "Whisper Falls", "Rainbow Cascade"],
 	"lake": ["Mirror Lake", "Lake Serenity", "Heron Lake", "Sapphire Tarn"],
 	"grove": ["Elder Grove", "Cathedral Grove", "Grandfather Pines", "Mossy Hollow"],
+	"arch": ["Windgate Arch", "Coyote Arch", "Sunrise Arch", "The Needle's Eye"],
 	"spring": ["Opal Springs", "Painted Pools", "Steamboat Spring", "Emerald Basin"],
 }
 

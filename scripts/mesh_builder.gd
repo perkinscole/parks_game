@@ -146,6 +146,35 @@ func blob(center: Vector3, r: Vector3, col: Color, seg: int = 6) -> void:
 				tri_out(p01, p11, p10, shade, center)
 
 
+## Smooth-shaded ball, slightly lumpy, for foliage.
+func blob_smooth(center: Vector3, r: Vector3, col: Color, seg: int = 8, rings: int = 5) -> void:
+	for j in rings:
+		for i in seg:
+			var quad_pts: Array[Vector3] = []
+			var quad_n: Array[Vector3] = []
+			for corner in [[0, 0], [1, 0], [1, 1], [0, 1]]:
+				var t: float = PI * (j + corner[1]) / rings
+				var a: float = TAU * (i + corner[0]) / seg
+				var dir := Vector3(sin(t) * cos(a), cos(t), sin(t) * sin(a))
+				var lump := 1.0 + 0.14 * sin(a * 3.0 + t * 5.0 + center.x * 9.0)
+				quad_pts.append(center + dir * r * lump)
+				quad_n.append((dir / r).normalized())
+			var shade := col.darkened(0.3 * float(j) / rings)
+			for tri_i in [[0, 1, 2], [0, 2, 3]]:
+				var a0 := quad_pts[tri_i[0]]
+				var b0 := quad_pts[tri_i[1]]
+				var c0 := quad_pts[tri_i[2]]
+				if a0.is_equal_approx(b0) or b0.is_equal_approx(c0) or a0.is_equal_approx(c0):
+					continue
+				var order: Array = tri_i
+				if (c0 - a0).cross(b0 - a0).dot(quad_n[tri_i[0]]) < 0.0:
+					order = [tri_i[0], tri_i[2], tri_i[1]]
+				for k in order:
+					v.append(quad_pts[k])
+					n.append(quad_n[k])
+					c.append(shade)
+
+
 func is_empty() -> bool:
 	return v.is_empty()
 

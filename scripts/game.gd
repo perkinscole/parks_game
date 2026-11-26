@@ -13,7 +13,7 @@ var staffing: Staffing
 var grants: Grants
 var rng := RandomNumberGenerator.new()
 
-var money := 25000.0
+var money := 40000.0
 var fee := 10
 var speed := 1
 var minutes := 6.0 * 60.0
@@ -38,9 +38,11 @@ var last_serious_day := -99
 var comments := {}
 var sat_by_type := {} # visitor type id -> [decayed sum, decayed count]
 var open := false
+var map_seed := 0
 var weather := "clear"
-var weather_next := "clear"
-var dry_days := 0
+var zone_weather: Array = ["clear", "clear", "clear", "clear", "clear"]
+var zone_next: Array = ["clear", "clear", "clear", "clear", "clear"]
+var zone_dry: Array = [0, 0, 0, 0, 0]
 var drought := false
 var climate := 0.0 # degrees of warming since the park opened
 var discoveries: Array = []
@@ -50,6 +52,7 @@ var _warned := {}
 
 
 func setup(seed_val: int) -> void:
+	map_seed = seed_val
 	rng.seed = seed_val
 	world = World.new()
 	world.generate(seed_val)
@@ -151,6 +154,7 @@ func _new_day() -> void:
 	update_appeal()
 	if (day - 1) % D.DAYS_PER_SEASON == 0:
 		say("%s has arrived." % D.SEASONS[season()], "info")
+	save_game() # autosave every morning
 	if money < 0.0:
 		say("The park is in debt! Raise income or cut costs.", "bad")
 
@@ -180,32 +184,63 @@ func record_rating(sat: float) -> void:
 	stars = sum / (ratings.size() + 8.0) / 20.0
 
 
-func _roll_weather() -> String:
+## Weather differs across the park: each biome is its own weather zone.
+func weather_at(t: Vector2i) -> String:
+	return zone_weather[world.biome[World.ti(t)]]
+
+
+func drought_at(t: Vector2i) -> bool:
+	return zone_dry[world.biome[World.ti(t)]] >= 5 and season() != 3
+
+
+func _roll_weather(zone: int, x: float) -> String:
 	var s := season()
-	var x := rng.randf()
 	var heat := 0.12 + climate * 0.12
+	var wet := 1.0
+	match zone:
+		D.BIOME.DESERT:
+			wet = 0.3
+			heat += 0.3
+		D.BIOME.WETLAND, D.BIOME.FOREST:
+			wet = 1.25
+		D.BIOME.ALPINE:
+			# the high country stays wintry for longer and brews its own storms
+			if s == 3: return "snow" if x < 0.65 else "clear"
+			if s != 1: return "snow" if x < 0.32 else ("storm" if x < 0.42 else "clear")
+			return "storm" if x < 0.2 else ("rain" if x < 0.35 else "clear")
 	match s:
-		0: return "rain" if x < 0.3 else ("storm" if x < 0.37 else "clear")
-		1: return "heat" if x < heat else ("storm" if x < heat + 0.08 else ("rain" if x < heat + 0.2 else "clear"))
-		2: return "rain" if x < 0.28 else ("storm" if x < 0.33 else "clear")
+		0: return "rain" if x < 0.3 * wet else ("storm" if x < 0.3 * wet + 0.07 else "clear")
+		1: return "heat" if x < heat else ("storm" if x < heat + 0.08 * wet else ("rain" if x < heat + 0.2 * wet else "clear"))
+		2: return "rain" if x < 0.28 * wet else ("storm" if x < 0.28 * wet + 0.05 else "clear")
+	if zone == D.BIOME.DESERT:
+		return "rain" if x < 0.1 else "clear"
 	return "snow" if x < 0.4 else "clear"
 
 
 func _advance_weather() -> void:
-	weather = weather_next
-	weather_next = _roll_weather()
-	if weather == "rain" or weather == "storm" or weather == "snow":
-		dry_days = 0
-	else:
-		dry_days += 2 if weather == "heat" else 1
+	var front := rng.randf() # weather systems often cover several zones at once
+	for z in zone_weather.size():
+		zone_weather[z] = zone_next[z]
+		zone_next[z] = _roll_weather(z, front if rng.randf() < 0.55 else rng.randf())
+		var wz: String = zone_weather[z]
+		if wz == "rain" or wz == "storm" or wz == "snow":
+			zone_dry[z] = 0
+		else:
+			zone_dry[z] += 2 if wz == "heat" else 1
+	weather = zone_weather[world.biome[World.ti(world.entry)]]
 	var was := drought
-	drought = dry_days >= 5 and season() != 3
+	drought = (zone_dry[D.BIOME.FOREST] >= 5 or zone_dry[D.BIOME.VALLEY] >= 5) and season() != 3
 	if drought and not was:
 		say("Drought: it has not rained in days. Streams are low, meadows are browning and fire danger is high.", "warn")
-	if weather == "storm":
-		say("Thunderstorm today: fewer visitors, more accidents, and lightning can start fires.", "warn")
-	elif weather == "heat":
-		say("Heatwave today. Fire danger is high.", "warn")
+	var storms: Array = []
+	var hot: Array = []
+	for z in zone_weather.size():
+		if zone_weather[z] == "storm": storms.append(D.BIOME_NAMES[z].to_lower())
+		elif zone_weather[z] == "heat": hot.append(D.BIOME_NAMES[z].to_lower())
+	if not storms.is_empty():
+		say("Thunderstorms over the %s today: more accidents there, and lightning can start fires." % " and ".join(storms), "warn")
+	if not hot.is_empty():
+		say("Heatwave in the %s. Fire danger is high." % " and ".join(hot), "warn")
 	if (day - 1) % (D.DAYS_PER_SEASON * 4) == 0 and day > 1:
 		climate += 0.15
 		if world.count_kind(D.B.RESEARCH) > 0:
@@ -344,4 +379,106 @@ func weed(t: Vector2i) -> bool:
 
 func set_fee(v: int) -> void:
 	fee = clampi(v, 0, 60)
+	update_appeal()
+
+
+# ------------------------------------------------------------- save and load
+const SAVE_PATH := "user://wildlands_save.dat"
+
+
+static func has_save() -> bool:
+	return FileAccess.file_exists(SAVE_PATH)
+
+
+static func read_save() -> Dictionary:
+	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	if f == null:
+		return {}
+	var d = f.get_var()
+	return d if d is Dictionary and d.get("version", 0) == 2 else {}
+
+
+## Everything that differs from a freshly generated map with this seed.
+## Visitors are not saved: the park reopens empty.
+func save_game() -> bool:
+	var structs: Array = []
+	for s in world.structures.values():
+		structs.append({id = s.id, kind = s.kind, tile = s.tile, size = s.size, name = s.name, visits = s.visits})
+	var roles: Array = []
+	for s in staffing.staff:
+		roles.append(s.role)
+	var d := {
+		version = 2, seed = map_seed, day = day, minutes = minutes, money = money, fee = fee, research = research,
+		research_total = research_total, techs = techs, safety = safety, ratings = ratings, total_visitors = total_visitors,
+		serious = serious_incidents, last_serious = last_serious_day, climate = climate, zone_weather = zone_weather,
+		zone_next = zone_next, zone_dry = zone_dry, discoveries = discoveries, comments = comments,
+		terrain = world.terrain, trees = world.trees, build = world.build, sid = world.sid, litter = world.litter,
+		invasive = world.invasive, inv_seen = world.inv_seen, rare = world.rare, burned = world.burned,
+		footfall = world.footfall, structures = structs, next_sid = world.next_sid,
+		pops = eco.pops, know = eco.know, surveys = eco.surveys, staff = roles,
+		offers = grants.offers, active = grants.active, grants_done = grants.completed,
+	}
+	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if f == null:
+		return false
+	f.store_var(d)
+	return true
+
+
+## Call right after setup() with the same seed the save was made from.
+func load_game(d: Dictionary) -> void:
+	day = d.day
+	minutes = d.minutes
+	_last_hour = int(minutes / 60.0)
+	money = d.money
+	fee = d.fee
+	research = d.research
+	research_total = d.research_total
+	techs = d.techs
+	safety = d.safety
+	ratings.assign(d.ratings)
+	total_visitors = d.total_visitors
+	serious_incidents = d.serious
+	last_serious_day = d.last_serious
+	climate = d.climate
+	zone_weather = d.zone_weather
+	zone_next = d.zone_next
+	zone_dry = d.zone_dry
+	discoveries = d.discoveries
+	comments = d.comments
+	world.terrain = d.terrain
+	world.trees = d.trees
+	world.build = d.build
+	world.sid = d.sid
+	world.litter = d.litter
+	world.invasive = d.invasive
+	world.inv_seen = d.inv_seen
+	world.rare = d.rare
+	world.burned = d.burned
+	world.footfall = d.footfall
+	world.next_sid = d.next_sid
+	world.structures.clear()
+	for s in d.structures:
+		world.structures[s.id] = {id = s.id, kind = s.kind, tile = s.tile, size = s.size, name = s.name, quality = 0.5,
+			visitors = 0, access = [] as Array[Vector2i], visits = s.visits}
+	world.litter_tiles.clear()
+	world.invasive_tiles.clear()
+	for i in world.litter.size():
+		if world.litter[i] > 0: world.litter_tiles[i] = true
+		if world.invasive[i] > 0.0: world.invasive_tiles[i] = true
+	world.sustainable_trails = techs.has("trails")
+	world.rebuild_nav()
+	world.recompute_fields()
+	eco.pops.assign(d.pops)
+	eco.know.assign(d.know)
+	eco.surveys = d.surveys
+	for role in d.staff:
+		staffing.hire(role)
+	grants.offers = d.offers
+	grants.active = d.active
+	grants.completed = d.grants_done
+	weather = zone_weather[world.biome[World.ti(world.entry)]]
+	record_rating(60.0)
+	ratings.pop_back()
+	eco.daily_refresh()
 	update_appeal()

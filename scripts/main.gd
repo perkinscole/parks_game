@@ -16,6 +16,9 @@ var sky_mat: ProceduralSkyMaterial
 var rain: GPUParticles3D
 var snow: GPUParticles3D
 var _overcast := 0.0
+var _args := {}
+var menu: CanvasLayer
+var menu_status: Label
 var font: Font
 
 # orbit camera
@@ -50,22 +53,134 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		var kv := a.trim_prefix("--").split("=")
 		args[kv[0]] = kv[1] if kv.size() > 1 else "1"
-	var seed_val := int(args.get("seed", "0"))
+	var base = load("res://fonts/Inter-Medium.otf")
+	font = base if base != null else ThemeDB.fallback_font
+	_args = args
+	if args.has("load") and Game.has_save():
+		start_game(0, Game.read_save())
+	elif args.is_empty() or args.has("menu"):
+		_show_menu()
+	else:
+		start_game(int(args.get("seed", "0")), {})
+
+
+# ----------------------------------------------------------------- main menu
+
+func _menu_button(text: String, cb: Callable, enabled: bool = true) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.disabled = not enabled
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(300, 54)
+	b.add_theme_font_override("font", font)
+	b.add_theme_font_size_override("font_size", 22)
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color(0.07, 0.09, 0.11, 0.78)
+	normal.set_corner_radius_all(6)
+	normal.border_color = Color(1, 1, 1, 0.25)
+	normal.set_border_width_all(1)
+	normal.set_content_margin_all(10)
+	var hover: StyleBoxFlat = normal.duplicate()
+	hover.bg_color = Color(0.16, 0.2, 0.22, 0.9)
+	var off: StyleBoxFlat = normal.duplicate()
+	off.bg_color = Color(0.07, 0.09, 0.11, 0.4)
+	b.add_theme_stylebox_override("normal", normal)
+	b.add_theme_stylebox_override("hover", hover)
+	b.add_theme_stylebox_override("pressed", hover)
+	b.add_theme_stylebox_override("disabled", off)
+	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	for c in ["font_color", "font_hover_color", "font_pressed_color"]:
+		b.add_theme_color_override(c, Color("f2f5f6"))
+	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.35))
+	b.pressed.connect(cb)
+	return b
+
+
+func _show_menu() -> void:
+	menu = CanvasLayer.new()
+	menu.layer = 20
+	add_child(menu)
+	var bg := TextureRect.new()
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.45, 0.75, 1.0])
+	grad.colors = PackedColorArray([Color("16263d"), Color("3f6f8c"), Color("e6a36a"), Color("27402c")])
+	var gt := GradientTexture2D.new()
+	gt.gradient = grad
+	gt.fill_from = Vector2(0, 0)
+	gt.fill_to = Vector2(0, 1)
+	bg.texture = gt
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.stretch_mode = TextureRect.STRETCH_SCALE
+	menu.add_child(bg)
+	var box := VBoxContainer.new()
+	box.set_anchors_preset(Control.PRESET_CENTER)
+	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	box.grow_vertical = Control.GROW_DIRECTION_BOTH
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_theme_constant_override("separation", 14)
+	menu.add_child(box)
+	var title := Label.new()
+	title.text = "WILDLANDS"
+	title.add_theme_font_override("font", font)
+	title.add_theme_font_size_override("font_size", 84)
+	title.add_theme_color_override("font_color", Color("fff8e6"))
+	title.add_theme_color_override("font_outline_color", Color(0.05, 0.1, 0.12, 0.6))
+	title.add_theme_constant_override("outline_size", 10)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	var sub := Label.new()
+	sub.text = "Build and care for a national park"
+	sub.add_theme_font_override("font", font)
+	sub.add_theme_font_size_override("font_size", 22)
+	sub.add_theme_color_override("font_color", Color("f3e9cf"))
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(sub)
+	var gap := Control.new()
+	gap.custom_minimum_size = Vector2(0, 26)
+	box.add_child(gap)
+	var saved := Game.read_save()
+	var holder := VBoxContainer.new()
+	holder.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	holder.add_theme_constant_override("separation", 12)
+	box.add_child(holder)
+	holder.add_child(_menu_button("New Park", func(): _menu_start(0, {})))
+	var load_text := "Load Game"
+	if not saved.is_empty():
+		load_text = "Load Game  (day %d, %s)" % [saved.day, D.money(saved.money)]
+	holder.add_child(_menu_button(load_text, func(): _menu_start(0, saved), not saved.is_empty()))
+	holder.add_child(_menu_button("Quit", func(): get_tree().quit()))
+	menu_status = Label.new()
+	menu_status.text = "Every new park is a different randomly generated landscape."
+	menu_status.add_theme_font_override("font", font)
+	menu_status.add_theme_font_size_override("font_size", 16)
+	menu_status.add_theme_color_override("font_color", Color("f3e9cf"))
+	menu_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(menu_status)
+
+
+func _menu_start(seed_val: int, save: Dictionary) -> void:
+	if game != null:
+		return
+	menu_status.text = "Surveying the land..." if save.is_empty() else "Loading your park..."
+	await get_tree().process_frame
+	await get_tree().process_frame
+	start_game(seed_val, save)
+	menu.queue_free()
+	menu = null
+
+
+func start_game(seed_val: int, save: Dictionary) -> void:
+	var args := _args
+	if not save.is_empty():
+		seed_val = save.seed
 	if seed_val == 0:
 		seed_val = int(Time.get_unix_time_from_system()) % 1000000 + 1
-
-	var base = load("res://fonts/Fredoka.ttf")
-	if base != null:
-		var fv := FontVariation.new()
-		fv.base_font = base
-		fv.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): 500}
-		font = fv
-	else:
-		font = ThemeDB.fallback_font
 
 	game = Game.new()
 	add_child(game)
 	game.setup(seed_val)
+	if not save.is_empty():
+		game.load_game(save)
 	world = game.world
 
 	var we := WorldEnvironment.new()
@@ -90,8 +205,8 @@ func _ready() -> void:
 	env.glow_bloom = 0.04
 	env.glow_hdr_threshold = 1.1
 	env.fog_enabled = true
-	env.fog_density = 0.0022
-	env.fog_aerial_perspective = 0.4
+	env.fog_density = 0.0006
+	env.fog_aerial_perspective = 0.25
 	env.fog_sky_affect = 0.0
 	we.environment = env
 	add_child(we)
@@ -100,7 +215,7 @@ func _ready() -> void:
 	sun.shadow_opacity = 0.85
 	sun.shadow_blur = 1.2
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-	sun.directional_shadow_max_distance = 130.0
+	sun.directional_shadow_max_distance = 240.0
 	sun.light_angular_distance = 0.6
 	add_child(sun)
 
@@ -130,10 +245,13 @@ func _ready() -> void:
 	cam = Camera3D.new()
 	cam.fov = 42.0
 	cam.near = 0.3
-	cam.far = 500.0
+	cam.far = 3000.0
 	add_child(cam)
 	cam.make_current()
-	target = Vector3(world.entry.x + 0.5, 0.0, world.entry.y - 9.0)
+	# start at the park entrance, looking north into the park
+	target = Vector3(world.entry.x + 0.5, 0.0, world.entry.y - 5.0)
+	dist = 26.0
+	pitch = 0.62
 	_update_camera()
 
 	hud = HUD.new()
@@ -143,10 +261,23 @@ func _ready() -> void:
 	hud.tool_selected.connect(func(t): tool = t; dragging = false)
 	hud.overlay_selected.connect(_set_overlay)
 	hud.jump_to.connect(func(t): target = Vector3(t.x + 0.5, 0, t.y + 0.5))
-	game.say("Welcome, Superintendent! This wild land is yours to protect and share. Follow the Getting Started list to open the park.", "good")
+	hud.menu_action.connect(_on_menu_action)
+	if save.is_empty():
+		game.say("Welcome, Superintendent! This wild land is yours to protect and share. The highway passes the south edge: build your park road north from the glowing marker.", "good")
+	else:
+		game.say("Welcome back. The park reopens this morning.", "good")
 	game.say("Camera: drag to move, right-drag to orbit, scroll to zoom (or WASD, Q/E). Click anything to inspect it.", "info")
 
 	_dev_hooks(args)
+
+
+func _on_menu_action(what: String) -> void:
+	match what:
+		"save":
+			game.say("Game saved." if game.save_game() else "Could not write the save file.", "good")
+		"menu":
+			game.save_game()
+			get_tree().reload_current_scene()
 
 
 func _set_overlay(m: String) -> void:
@@ -176,9 +307,9 @@ func _flat_mesh_instance() -> MeshInstance3D:
 func _update_camera() -> void:
 	target.x = clampf(target.x, 0.0, World.W)
 	target.z = clampf(target.z, 0.0, World.H)
-	target.y = lerpf(target.y, maxf(land.height_at(target.x, target.z), 0.0), 0.12)
+	target.y = lerpf(target.y, land.top_at(target.x, target.z), 0.12)
 	pitch = clampf(pitch, 0.16, 1.45)
-	dist = clampf(dist, 4.0, 110.0)
+	dist = clampf(dist, 2.5, 320.0)
 	var offset := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
 	cam.position = target + offset
 	cam.look_at(target, Vector3.UP)
@@ -192,7 +323,7 @@ func _make_precip(amount: int, size: Vector2, col: Color, speed: float) -> GPUPa
 	p.visibility_aabb = AABB(Vector3(-40, -30, -40), Vector3(80, 60, 80))
 	var pm := ParticleProcessMaterial.new()
 	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
-	pm.emission_box_extents = Vector3(26, 0.5, 26)
+	pm.emission_box_extents = Vector3(34, 0.5, 34)
 	pm.direction = Vector3(0.12, -1, 0.05)
 	pm.spread = 2.0 if speed > 10.0 else 12.0
 	pm.initial_velocity_min = speed * 0.85
@@ -245,20 +376,24 @@ func _update_sky() -> void:
 	env.fog_light_color = sky_mat.sky_horizon_color.lerp(Color(0.6, 0.68, 0.78), 0.4 * day)
 	land.set_night(smoothstep(0.35, 0.9, night + glow * 0.5 + _overcast * 0.25))
 	# weather: clouds, rain and snow
-	var wet: bool = game.weather == "rain" or game.weather == "storm" or game.weather == "snow"
+	# weather is regional: show whatever is happening where the camera is looking
+	var view_tile := Vector2i(clampi(int(target.x), 0, World.W - 1), clampi(int(target.z), 0, World.H - 1))
+	var wx: String = game.weather_at(view_tile)
+	hud.view_tile = view_tile
+	var wet: bool = wx == "rain" or wx == "storm" or wx == "snow"
 	_overcast = move_toward(_overcast, 1.0 if wet else 0.0, 0.01)
 	var grey := Color(0.5, 0.54, 0.6) * (0.35 + 0.65 * day)
 	sky_mat.sky_top_color = sky_mat.sky_top_color.lerp(grey * 0.8, _overcast)
 	sky_mat.sky_horizon_color = sky_mat.sky_horizon_color.lerp(grey, _overcast)
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color
 	env.fog_light_color = env.fog_light_color.lerp(grey, _overcast)
-	env.fog_density = lerpf(0.0022, 0.011 if game.weather != "snow" else 0.016, _overcast)
+	env.fog_density = lerpf(0.0006, 0.005 if wx != "snow" else 0.009, _overcast)
 	env.ambient_light_energy += 0.12 * _overcast
-	if game.weather == "heat":
+	if wx == "heat":
 		env.fog_light_color = env.fog_light_color.lerp(Color(0.9, 0.8, 0.6), 0.4)
-	rain.emitting = game.weather == "rain" or game.weather == "storm"
-	snow.emitting = game.weather == "snow"
-	var above := target + Vector3(0, 13.0, 0)
+	rain.emitting = wx == "rain" or wx == "storm"
+	snow.emitting = wx == "snow"
+	var above := target + Vector3(0, 13.0 + dist * 0.15, 0)
 	rain.position = above
 	snow.position = above
 	land.climate = game.climate
@@ -277,19 +412,19 @@ func _ray_ground(screen: Vector2):
 	var dir := cam.project_ray_normal(screen)
 	if dir.y >= -0.01:
 		return null
-	var step := 0.3
+	var step := maxf(0.3, dist * 0.006)
 	var prev := from
 	var p := from
 	for k in 1500:
 		p += dir * step
 		var inside := p.x >= 0.0 and p.z >= 0.0 and p.x < World.W and p.z < World.H
-		var ground := maxf(land.height_at(p.x, p.z), 0.0) if inside else -1.6
+		var ground := land.top_at(p.x, p.z) if inside else -1.6
 		if p.y <= ground:
 			if not inside:
 				return null
 			for b in 8:
 				var mid := (prev + p) * 0.5
-				if mid.y <= maxf(land.height_at(mid.x, mid.z), 0.0):
+				if mid.y <= land.top_at(mid.x, mid.z):
 					p = mid
 				else:
 					prev = mid
@@ -307,6 +442,8 @@ func _update_hover() -> void:
 # --------------------------------------------------------------------- input
 
 func _unhandled_input(event: InputEvent) -> void:
+	if game == null:
+		return
 	if event is InputEventMouseButton:
 		match event.button_index:
 			MOUSE_BUTTON_WHEEL_UP:
@@ -344,6 +481,8 @@ func _unhandled_input(event: InputEvent) -> void:
 ## Releases and drags are handled here so they still arrive when the mouse
 ## ends up over the UI.
 func _input(event: InputEvent) -> void:
+	if game == null:
+		return
 	if event is InputEventMouseMotion:
 		if orbiting:
 			yaw -= event.relative.x * 0.007
@@ -372,6 +511,8 @@ func _input(event: InputEvent) -> void:
 
 
 func _process(delta: float) -> void:
+	if game == null:
+		return
 	var mv := Vector2.ZERO
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): mv.x += 1
 	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): mv.x -= 1
@@ -460,8 +601,7 @@ func _tile_ok(t: Vector2i) -> bool:
 
 
 func _tile_quad(m: MeshBuilder, t: Vector2i, col: Color, lift: float, parts: int = 2) -> void:
-	var water := world.is_water(world.terrain[World.ti(t)])
-	var floor_y := 0.0 if water else -9.0
+	var floor_y: float = world.wlevel[World.ti(t)]
 	var step := 1.0 / parts
 	for j in parts:
 		for i in parts:
@@ -498,7 +638,7 @@ func _update_cursor() -> void:
 		var cx := hover.x + sz.x * 0.5
 		var cz := hover.y + sz.y * 0.5
 		ghost.mesh = Models.structure(tool)
-		ghost.position = Vector3(cx, maxf(land.surface_at(cx, cz), 0.0) + 0.05, cz)
+		ghost.position = Vector3(cx, maxf(land.surface_at(cx, cz), land.water_at(cx, cz)) + 0.05, cz)
 		ghost_mat.albedo_color = Color(0.8, 1.0, 0.85, 0.75) if why == "" else Color(1.0, 0.45, 0.4, 0.6)
 		ghost.visible = true
 	else:
@@ -674,6 +814,8 @@ func _update_inspector() -> void:
 # to build a small demo park, fast-forward it and save a screenshot.
 
 func _dev_hooks(args: Dictionary) -> void:
+	if args.has("stats"):
+		_terrain_stats()
 	if args.has("autoplay"):
 		_demo_park()
 	var days := int(args.get("days", "0"))
@@ -694,12 +836,20 @@ func _dev_hooks(args: Dictionary) -> void:
 		if c.size() > 2: dist = float(c[2])
 		if c.size() > 3: yaw = deg_to_rad(float(c[3]))
 		if c.size() > 4: pitch = deg_to_rad(float(c[4]))
+	if args.has("camrel"): # same, relative to the park entrance
+		var c2: PackedStringArray = args.camrel.split(",")
+		target = Vector3(world.entry.x + float(c2[0]), 0, world.entry.y + float(c2[1]))
+		if c2.size() > 2: dist = float(c2[2])
+		if c2.size() > 3: yaw = deg_to_rad(float(c2[3]))
+		if c2.size() > 4: pitch = deg_to_rad(float(c2[4]))
 	if args.has("panel"):
 		hud.toggle_panel(args.panel)
 	if args.has("overlay"):
 		overlay_mode = args.overlay
 	if args.has("weather"):
 		game.weather = args.weather
+		for z in game.zone_weather.size():
+			game.zone_weather[z] = args.weather
 		_overcast = 1.0 if args.weather in ["rain", "storm", "snow"] else 0.0
 	if args.has("season"):
 		game.day += int(args.season) * D.DAYS_PER_SEASON
@@ -843,8 +993,9 @@ func _ui_test() -> void:
 	for k in 5:
 		await get_tree().process_frame
 	var e := world.entry
-	target = Vector3(e.x + 0.5, 0.0, e.y - 4.0)
-	dist = 34.0
+	target = Vector3(e.x + 0.5, 0.0, e.y - 6.0)
+	dist = 40.0
+	pitch = 1.1
 	for k in 20:
 		await get_tree().process_frame
 	var roads := _count(D.B.ROAD)
@@ -882,3 +1033,26 @@ func _ui_test() -> void:
 	for k in 40:
 		await get_tree().process_frame
 	print("after a while: visitors ", game.visitors.people_count(), " ", game.date_text())
+
+
+func _terrain_stats() -> void:
+	var counts := {}
+	var bio := {}
+	var water := 0
+	var river := 0
+	var hi := 0.0
+	for i in world.terrain.size():
+		counts[world.terrain[i]] = counts.get(world.terrain[i], 0) + 1
+		bio[world.biome[i]] = bio.get(world.biome[i], 0) + 1
+		if world.wlevel[i] != World.NO_WATER:
+			water += 1
+		hi = maxf(hi, world.height[i])
+	var n := float(world.terrain.size())
+	var line := "terrain:"
+	for k in counts:
+		line += " %s %d%%" % [D.TERRAIN_NAMES[k], int(counts[k] * 100.0 / n)]
+	print(line)
+	line = "biomes:"
+	for k in bio:
+		line += " %s %d%%" % [D.BIOME_NAMES[k], int(bio[k] * 100.0 / n)]
+	print(line, "  water tiles ", water, "  highest ", snappedf(hi, 0.1), "  entry ", world.entry, "  landmarks ", world.landmarks.map(func(l): return l.kind))

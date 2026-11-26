@@ -6,11 +6,12 @@ extends CanvasLayer
 signal tool_selected(tool)
 signal overlay_selected(mode: String)
 signal jump_to(tile: Vector2i)
+signal menu_action(what: String)
 
-const INK := Color("2f3e2f")
-const CREAM := Color("fdf6e3")
-const GREEN := Color("3f8f5a")
-const KIND_COLORS := {"good": Color("3f8f5a"), "warn": Color("e0a030"), "bad": Color("d9534f"), "info": Color("4a90d9")}
+const INK := Color("e9eef0")
+const CREAM := Color("12171b")
+const GREEN := Color("7fd18b")
+const KIND_COLORS := {"good": Color("7fd18b"), "warn": Color("f2b84b"), "bad": Color("ff6b5e"), "info": Color("6bb6ff")}
 
 class Glyph extends Control:
 	var kind := "coin"
@@ -53,10 +54,10 @@ class Glyph extends Control:
 			"clock":
 				Art.circ(self, r, 0.5, 0.5, 0.46, Color("4a90d9"))
 				Art.circ(self, r, 0.5, 0.5, 0.36, Color.WHITE)
-				Art.line(self, r, 0.5, 0.5, 0.5, 0.24, INK, 0.07)
-				Art.line(self, r, 0.5, 0.5, 0.7, 0.56, INK, 0.07)
+				Art.line(self, r, 0.5, 0.5, 0.5, 0.24, Color("2f3e2f"), 0.07)
+				Art.line(self, r, 0.5, 0.5, 0.7, 0.56, Color("2f3e2f"), 0.07)
 			"check":
-				Art.circ(self, r, 0.5, 0.5, 0.46, GREEN)
+				Art.circ(self, r, 0.5, 0.5, 0.46, Color("3f8f5a"))
 				draw_polyline(PackedVector2Array([Art.P(r, 0.26, 0.52), Art.P(r, 0.44, 0.7), Art.P(r, 0.76, 0.32)]), Color.WHITE, size.x * 0.12)
 			"todo":
 				draw_arc(size * 0.5, size.x * 0.4, 0, TAU, 20, Color("b9ad8f"), size.x * 0.1)
@@ -64,21 +65,26 @@ class Glyph extends Control:
 class ToolButton extends Button:
 	var tool
 	var cost_text := ""
+	var label_text := ""
 	var locked := false
 	func _draw() -> void:
-		var s := minf(size.x - 16.0, size.y - 28.0)
-		var r := Rect2(Vector2((size.x - s) * 0.5, 8.0), Vector2(s, s))
+		var s := minf(size.x - 30.0, size.y - 44.0)
+		var r := Rect2(Vector2((size.x - s) * 0.5, 7.0), Vector2(s, s))
+		draw_rect(Rect2(r.position - Vector2(5, 3), r.size + Vector2(10, 7)), Color(0.86, 0.9, 0.86, 0.9))
 		Art.structure(self, tool, r)
 		var f := get_theme_default_font()
 		var wd := f.get_string_size(cost_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
-		draw_string(f, Vector2((size.x - wd) * 0.5, size.y - 6.0), cost_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("5c6b55"))
+		var nw := f.get_string_size(label_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+		draw_string(f, Vector2((size.x - nw) * 0.5, size.y - 20.0), label_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("e9eef0"))
+		draw_string(f, Vector2((size.x - wd) * 0.5, size.y - 6.0), cost_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("f2c879"))
 		if locked:
-			draw_rect(Rect2(Vector2.ZERO, size), Color(0.95, 0.93, 0.85, 0.7))
+			draw_rect(Rect2(Vector2.ZERO, size), Color(0.07, 0.09, 0.11, 0.72))
 
 var game: Game
 var font: Font
 var root: Control
 var current_tool = null
+var view_tile := Vector2i.ZERO
 var panel_id := ""
 var stat := {}
 var speed_buttons: Array[Button] = []
@@ -117,7 +123,7 @@ func setup(g: Game, f: Font) -> void:
 	_update_objectives()
 
 
-func _sb(bg: Color, radius: int = 10, border: Color = Color.TRANSPARENT, bw: int = 0, pad: float = 8.0) -> StyleBoxFlat:
+func _sb(bg: Color, radius: int = 6, border: Color = Color.TRANSPARENT, bw: int = 0, pad: float = 8.0) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.bg_color = bg
 	s.set_corner_radius_all(radius)
@@ -131,26 +137,26 @@ func _sb(bg: Color, radius: int = 10, border: Color = Color.TRANSPARENT, bw: int
 func _make_theme() -> Theme:
 	var th := Theme.new()
 	th.default_font = font
-	th.default_font_size = 15
-	var panel := _sb(Color(CREAM, 0.97), 14, Color("c9b98a"), 2, 10.0)
+	th.default_font_size = 14
+	var panel := _sb(Color(CREAM, 0.88), 8, Color(1, 1, 1, 0.1), 1, 10.0)
 	panel.shadow_color = Color(0, 0, 0, 0.18)
 	panel.shadow_size = 5
 	panel.shadow_offset = Vector2(0, 2)
 	th.set_stylebox("panel", "PanelContainer", panel)
 	th.set_color("font_color", "Label", INK)
-	th.set_stylebox("normal", "Button", _sb(Color("efe3c2"), 9, Color("d3c296"), 1, 6.0))
-	th.set_stylebox("hover", "Button", _sb(Color("f8efd4"), 9, Color("b9a56f"), 1, 6.0))
-	th.set_stylebox("pressed", "Button", _sb(Color("bfe3b4"), 9, GREEN, 2, 6.0))
-	th.set_stylebox("disabled", "Button", _sb(Color("e8e2d2"), 9, Color("d9d2bd"), 1, 6.0))
+	th.set_stylebox("normal", "Button", _sb(Color(1, 1, 1, 0.07), 5, Color(1, 1, 1, 0.12), 1, 6.0))
+	th.set_stylebox("hover", "Button", _sb(Color(1, 1, 1, 0.15), 5, Color(1, 1, 1, 0.25), 1, 6.0))
+	th.set_stylebox("pressed", "Button", _sb(Color(0.5, 0.82, 0.55, 0.22), 5, GREEN, 1, 6.0))
+	th.set_stylebox("disabled", "Button", _sb(Color(1, 1, 1, 0.03), 5, Color(1, 1, 1, 0.06), 1, 6.0))
 	th.set_stylebox("focus", "Button", StyleBoxEmpty.new())
 	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_hover_pressed_color"]:
 		th.set_color(c, "Button", INK)
-	th.set_color("font_disabled_color", "Button", Color("a39f8f"))
-	th.set_stylebox("background", "ProgressBar", _sb(Color("e2d8ba"), 6, Color.TRANSPARENT, 0, 0.0))
+	th.set_color("font_disabled_color", "Button", Color("5a666d"))
+	th.set_stylebox("background", "ProgressBar", _sb(Color(1, 1, 1, 0.1), 3, Color.TRANSPARENT, 0, 0.0))
 	th.set_stylebox("fill", "ProgressBar", _sb(GREEN, 6, Color.TRANSPARENT, 0, 0.0))
-	var tip := _sb(Color("2f3e2f"), 8, Color.TRANSPARENT, 0, 8.0)
+	var tip := _sb(Color("0b0e10"), 6, Color(1, 1, 1, 0.18), 1, 8.0)
 	th.set_stylebox("panel", "TooltipPanel", tip)
-	th.set_color("font_color", "TooltipLabel", Color("fdf6e3"))
+	th.set_color("font_color", "TooltipLabel", Color("e9eef0"))
 	th.set_font_size("font_size", "TooltipLabel", 14)
 	return th
 
@@ -163,7 +169,7 @@ func _label(text: String, size: int = 15, col: Color = INK) -> Label:
 	return l
 
 
-func _para(text: String, size: int = 13, col: Color = Color("5c6b55")) -> Label:
+func _para(text: String, size: int = 13, col: Color = Color("a3afb6")) -> Label:
 	var l := _label(text, size, col)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	l.custom_minimum_size.x = 100
@@ -195,8 +201,8 @@ func _bar(v: float, col: Color = GREEN) -> ProgressBar:
 
 func _health_color(v: float) -> Color:
 	if v >= 0.7: return GREEN
-	if v >= 0.45: return Color("e0a030")
-	return Color("d9534f")
+	if v >= 0.45: return Color("f2b84b")
+	return Color("ff6b5e")
 
 
 # ------------------------------------------------------------------ top bar
@@ -219,19 +225,20 @@ func _chip(parent: Control, key: String, glyph: String, tip: String, minw: float
 func _build_top() -> void:
 	var bar := PanelContainer.new()
 	bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	bar.offset_left = 8
-	bar.offset_right = -8
-	bar.offset_top = 6
+	bar.offset_left = 0
+	bar.offset_right = 0
+	bar.offset_top = 0
+	bar.add_theme_stylebox_override("panel", _sb(Color(CREAM, 0.92), 0, Color.TRANSPARENT, 0, 8.0))
 	root.add_child(bar)
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 16)
 	bar.add_child(h)
 	_chip(h, "money", "coin", "Park funds", 78)
-	_chip(h, "date", "clock", "Season, day and time. A year has four 6-day seasons; summer is busiest.", 215)
+	_chip(h, "date", "clock", "Season, day and time. A year has four 6-day seasons; summer is busiest.", 200)
 	_chip(h, "visitors", "people", "Visitors in the park right now", 34)
 	_chip(h, "stars", "star", "Visitor rating (out of 5). Better ratings bring more visitors.", 30)
 	_chip(h, "eco", "leaf", "Ecosystem health, as far as your researchers can tell. Shows ? until ecologists have surveyed the park.", 44)
-	_chip(h, "weather", "sun", "Today's weather", 70)
+	_chip(h, "weather", "sun", "Weather where you are looking. Each part of the park has its own.", 118)
 	_chip(h, "safety", "shield", "Visitor safety record", 44)
 	_chip(h, "research", "flask", "Research points to spend on new techniques", 30)
 	var spacer := Control.new()
@@ -247,24 +254,29 @@ func _build_top() -> void:
 		h.add_child(b)
 		speed_buttons.append(b)
 
+	var menu_bg := PanelContainer.new()
+	menu_bg.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	menu_bg.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	menu_bg.offset_top = 48
+	menu_bg.offset_right = -8
+	menu_bg.add_theme_stylebox_override("panel", _sb(Color(CREAM, 0.88), 8, Color(1, 1, 1, 0.1), 1, 5.0))
+	root.add_child(menu_bg)
 	var menu := HBoxContainer.new()
-	menu.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	menu.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	menu.offset_top = 58
-	menu.offset_right = -8
 	menu.add_theme_constant_override("separation", 4)
-	root.add_child(menu)
+	menu_bg.add_child(menu)
 	for id in ["Park", "Wildlife", "Staff", "Research", "Grants", "Finances"]:
 		menu.add_child(_button(id, func(): toggle_panel(id)))
+	menu.add_child(_button("Save", func(): menu_action.emit("save"), "Save the park (it also saves by itself every morning)"))
+	menu.add_child(_button("Menu", func(): menu_action.emit("menu"), "Save and return to the main menu"))
 	var ov := OptionButton.new()
 	ov.focus_mode = Control.FOCUS_NONE
 	ov.tooltip_text = "Map overlay"
 	for name in ["View: Normal", "View: Habitat", "View: Scenery", "View: Disturbance"]:
 		ov.add_item(name)
 	ov.item_selected.connect(func(i): overlay_selected.emit(["", "habitat", "scenery", "disturb"][i]))
-	ov.add_theme_stylebox_override("normal", _sb(Color("efe3c2"), 9, Color("d3c296"), 1, 6.0))
-	ov.add_theme_stylebox_override("hover", _sb(Color("f8efd4"), 9, Color("b9a56f"), 1, 6.0))
-	ov.add_theme_stylebox_override("pressed", _sb(Color("f8efd4"), 9, Color("b9a56f"), 1, 6.0))
+	ov.add_theme_stylebox_override("normal", _sb(Color(1, 1, 1, 0.07), 5, Color(1, 1, 1, 0.12), 1, 6.0))
+	ov.add_theme_stylebox_override("hover", _sb(Color(1, 1, 1, 0.15), 5, Color(1, 1, 1, 0.25), 1, 6.0))
+	ov.add_theme_stylebox_override("pressed", _sb(Color(1, 1, 1, 0.15), 5, Color(1, 1, 1, 0.25), 1, 6.0))
 	ov.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		ov.add_theme_color_override(c, INK)
@@ -315,7 +327,7 @@ func _build_toolbar() -> void:
 	tool_row = HBoxContainer.new()
 	tool_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	tool_row.add_theme_constant_override("separation", 6)
-	tool_row.custom_minimum_size = Vector2(450, 76)
+	tool_row.custom_minimum_size = Vector2(450, 86)
 	v.add_child(tool_row)
 
 
@@ -330,9 +342,10 @@ func _show_category(i: int) -> void:
 		b.tool = tool
 		b.toggle_mode = true
 		b.focus_mode = Control.FOCUS_NONE
-		b.custom_minimum_size = Vector2(70, 76)
+		b.custom_minimum_size = Vector2(98, 86)
 		var def: Dictionary = D.BUILD[tool] if tool is int else D.TOOLS[tool]
 		b.cost_text = D.money(def.cost)
+		b.label_text = def.name if str(def.name).length() <= 15 else str(def.name).substr(0, 14) + "."
 		var unit := ""
 		if tool is String or tool == D.B.ROAD or tool == D.B.TRAIL or tool == D.B.PARKING:
 			unit = " per tile"
@@ -406,12 +419,12 @@ func toggle_panel(id: String) -> void:
 
 
 func _head(text: String) -> void:
-	side_body.add_child(_label(text, 16, Color("6b4a2f")))
+	side_body.add_child(_label(text, 16, Color("f2c879")))
 
 
 func _kv(k: String, v: String, col: Color = INK) -> void:
 	var h := HBoxContainer.new()
-	var a := _label(k, 14, Color("5c6b55"))
+	var a := _label(k, 14, Color("a3afb6"))
 	a.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(a)
 	h.add_child(_label(v, 14, col))
@@ -421,7 +434,7 @@ func _kv(k: String, v: String, col: Color = INK) -> void:
 func _kbar(k: String, v: float, text: String) -> void:
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 8)
-	var a := _label(k, 14, Color("5c6b55"))
+	var a := _label(k, 14, Color("a3afb6"))
 	a.custom_minimum_size.x = 120
 	h.add_child(a)
 	h.add_child(_bar(v, _health_color(v)))
@@ -447,26 +460,26 @@ func _fill_panel() -> void:
 
 func _panel_park() -> void:
 	var g := game
-	_kv("Status", "Open" if g.open else "Closed", GREEN if g.open else Color("d9534f"))
+	_kv("Status", "Open" if g.open else "Closed", GREEN if g.open else Color("ff6b5e"))
 	_kbar("Visitor rating", g.stars / 5.0, "%.1f" % g.stars)
 	if g.eco.understanding() >= 0.08:
 		_kbar("Ecosystem (est.)", g.eco.health / 100.0, _eco_text())
 	else:
-		_kv("Ecosystem", "unknown: no research yet", Color("b5553f"))
+		_kv("Ecosystem", "unknown: no research yet", Color("ff8a70"))
 	_kbar("Safety", g.safety / 100.0, "%d%%" % int(g.safety))
 	_head("Visitors")
 	_kv("In the park now", str(g.visitors.people_count()))
 	_kv("Arrived today", str(g.visitors_today))
-	_kv("Cars turned away (no parking)", str(g.turned_away_today), Color("d9534f") if g.turned_away_today > 0 else INK)
+	_kv("Cars turned away (no parking)", str(g.turned_away_today), Color("ff6b5e") if g.turned_away_today > 0 else INK)
 	_kv("Expected cars per day", str(int(g.demand)))
 	_kv("Parking spaces", str(g.world.lot_tiles.size() * 2))
 	_kv("All-time visitors", str(g.total_visitors))
 	_head("Park condition")
-	_kv("Littered tiles", str(g.world.litter_tiles.size()), Color("d9534f") if g.world.litter_tiles.size() > 10 else INK)
+	_kv("Littered tiles", str(g.world.litter_tiles.size()), Color("ff6b5e") if g.world.litter_tiles.size() > 10 else INK)
 	var inv := g.eco.seen_invasive_count()
-	_kv("Known invasive patches", str(inv), Color("d9534f") if inv > 0 else INK)
+	_kv("Known invasive patches", str(inv), Color("ff6b5e") if inv > 0 else INK)
 	if not g.world.fire_tiles.is_empty():
-		_kv("Tiles on fire", str(g.world.fire_tiles.size()), Color("d9534f"))
+		_kv("Tiles on fire", str(g.world.fire_tiles.size()), Color("ff6b5e"))
 	_kv("Trail length", "%d tiles" % g.world.trail_tiles.size())
 	_kv("Serious incidents", str(g.serious_incidents))
 	_head("What visitors are saying")
@@ -482,7 +495,7 @@ func _panel_park() -> void:
 		if s.kind in D.ATTRACTIONS:
 			any = true
 			var note := "" if not s.access.is_empty() else "  (no path!)"
-			_kv(s.name + note, "appeal %d%%, %d visits" % [int(float(s.quality) * 100.0), s.visits], Color("d9534f") if note != "" else INK)
+			_kv(s.name + note, "appeal %d%%, %d visits" % [int(float(s.quality) * 100.0), s.visits], Color("ff6b5e") if note != "" else INK)
 	if not any:
 		side_body.add_child(_para("Nothing built yet. Overlooks, picnic areas and visitor centers give people a reason to come."))
 
@@ -501,7 +514,7 @@ func _panel_wildlife() -> void:
 	var u := e.understanding()
 	var has_station := game.world.count_kind(D.B.RESEARCH) > 0
 	if u < 0.08:
-		side_body.add_child(_para("You know almost nothing about this ecosystem yet. Build a Research Station and hire ecologists: everything on this page comes from their field surveys. Without them, species can decline or invasives can spread unnoticed.", 14, Color("b5553f")))
+		side_body.add_child(_para("You know almost nothing about this ecosystem yet. Build a Research Station and hire ecologists: everything on this page comes from their field surveys. Without them, species can decline or invasives can spread unnoticed.", 14, Color("ff8a70")))
 	else:
 		_kbar("Ecosystem (est.)", e.health / 100.0, _eco_text())
 		if u >= 0.3:
@@ -513,12 +526,14 @@ func _panel_wildlife() -> void:
 	_kbar("Understanding", u, "%d%%" % int(u * 100.0))
 	side_body.add_child(_para("Field surveys completed: %d. Knowledge fades if monitoring stops." % e.surveys))
 	_head("Weather and climate")
-	var wtxt: String = D.WEATHER[game.weather].name
-	if game.drought:
-		wtxt += ", drought"
-	_kv("Today", wtxt)
+	for z in D.BIOME_NAMES.size():
+		var line: String = D.WEATHER[game.zone_weather[z]].name
+		if game.zone_dry[z] >= 5 and game.season() != 3:
+			line += ", drought"
+		if has_station:
+			line += "  (tomorrow: %s)" % D.WEATHER[game.zone_next[z]].name.to_lower()
+		_kv(D.BIOME_NAMES[z], line)
 	if has_station:
-		_kv("Forecast for tomorrow", D.WEATHER[game.weather_next].name)
 		_kv("Warming since opening", "+%.2f degrees" % game.climate)
 	else:
 		side_body.add_child(_para("A Research Station adds a weather station: forecasts and climate records."))
@@ -532,17 +547,17 @@ func _panel_wildlife() -> void:
 			var lvl := e.known(i)
 			var h := HBoxContainer.new()
 			h.add_theme_constant_override("separation", 8)
-			var a := _label(sp.name if lvl > 0 else "Unstudied species", 14, INK if lvl > 0 else Color("9aa392"))
+			var a := _label(sp.name if lvl > 0 else "Unstudied species", 14, INK if lvl > 0 else Color("6f7b82"))
 			a.custom_minimum_size.x = 138
 			h.add_child(a)
 			if lvl == 0:
-				h.add_child(_label("no data", 13, Color("9aa392")))
+				h.add_child(_label("no data", 13, Color("6f7b82")))
 				side_body.add_child(h)
 				continue
 			var v := e.ratio(i)
 			if lvl == 1:
 				v = round(v * 4.0) / 4.0 # rough impressions only
-			h.add_child(_bar(minf(v, 1.0), _health_color(v) if v <= 1.25 else Color("e0a030")))
+			h.add_child(_bar(minf(v, 1.0), _health_color(v) if v <= 1.25 else Color("f2b84b")))
 			var st := _label(e.status(i) if lvl == 2 else "unsure", 13, _health_color(v))
 			st.custom_minimum_size.x = 86
 			st.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -563,7 +578,7 @@ func _panel_staff() -> void:
 		var def: Dictionary = D.STAFF[role]
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 6)
-		var a := _label("%s   %d / %d" % [def.name, st.count(role), st.capacity(role)], 16, Color("6b4a2f"))
+		var a := _label("%s   %d / %d" % [def.name, st.count(role), st.capacity(role)], 16, Color("f2c879"))
 		a.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		h.add_child(a)
 		var fire_cb := func():
@@ -598,12 +613,12 @@ func _panel_staff() -> void:
 
 
 func _panel_research() -> void:
-	_kv("Research points", "%d" % int(game.research), Color("7e6bc4"))
+	_kv("Research points", "%d" % int(game.research), Color("b9a4ff"))
 	side_body.add_child(_para("Ecologists produce research every hour and from field surveys. Healthier ecosystems yield more."))
 	for t in D.TECHS:
 		var done: bool = game.has_tech(t.id)
 		var h := HBoxContainer.new()
-		var a := _label(t.name, 16, GREEN if done else Color("6b4a2f"))
+		var a := _label(t.name, 16, GREEN if done else Color("f2c879"))
 		a.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		h.add_child(a)
 		if done:
@@ -646,7 +661,7 @@ func _panel_grants() -> void:
 	for i in gr.offers.size():
 		var o: Dictionary = gr.offers[i]
 		var h := HBoxContainer.new()
-		var a := _label("%s   %s" % [o.title, D.money(o.reward)], 15, Color("6b4a2f"))
+		var a := _label("%s   %s" % [o.title, D.money(o.reward)], 15, Color("f2c879"))
 		a.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		a.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		h.add_child(a)
@@ -662,7 +677,7 @@ func _panel_grants() -> void:
 
 func _panel_finances() -> void:
 	var g := game
-	_kv("Balance", D.money(g.money), GREEN if g.money >= 0 else Color("d9534f"))
+	_kv("Balance", D.money(g.money), GREEN if g.money >= 0 else Color("ff6b5e"))
 	var h := HBoxContainer.new()
 	h.add_theme_constant_override("separation", 6)
 	var a := _label("Entry fee per car", 15)
@@ -692,8 +707,8 @@ func _panel_finances() -> void:
 			if absf(led[k]) < 0.5:
 				continue
 			total += led[k]
-			_kv(k, D.money(led[k]), GREEN if led[k] > 0 else Color("b5553f"))
-		_kv("Net", D.money(total), GREEN if total >= 0 else Color("d9534f"))
+			_kv(k, D.money(led[k]), GREEN if led[k] > 0 else Color("ff8a70"))
+		_kv("Net", D.money(total), GREEN if total >= 0 else Color("ff6b5e"))
 
 
 # ------------------------------------------------- toasts, checklist, inspector
@@ -712,7 +727,7 @@ func _build_misc() -> void:
 	objectives = PanelContainer.new()
 	objectives.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	objectives.offset_left = 8
-	objectives.offset_top = 58
+	objectives.offset_top = 48
 	objectives.custom_minimum_size.x = 300
 	root.add_child(objectives)
 	obj_box = VBoxContainer.new()
@@ -750,7 +765,7 @@ func _place_inspector() -> void:
 func _on_toast(text: String, kind: String, tile: Vector2i) -> void:
 	var p := PanelContainer.new()
 	var col: Color = KIND_COLORS.get(kind, KIND_COLORS.info)
-	var sb := _sb(Color(CREAM, 0.97), 10, col, 0, 7.0)
+	var sb := _sb(Color(CREAM, 0.9), 5, col, 0, 7.0)
 	sb.border_width_left = 6
 	sb.border_color = col
 	p.add_theme_stylebox_override("panel", sb)
@@ -812,7 +827,7 @@ func _update_objectives() -> void:
 		var gl := Glyph.new("check" if s[1] else "todo", 16)
 		gl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		h.add_child(gl)
-		var col := Color("9aa392") if s[1] else (INK if first_open else Color("7d8a76"))
+		var col := Color("6f7b82") if s[1] else (INK if first_open else Color("8a969d"))
 		h.add_child(_label(s[0], 13, col))
 		if not s[1]:
 			first_open = false
@@ -823,13 +838,14 @@ func _update_objectives() -> void:
 func _update_stats() -> void:
 	var g := game
 	stat.money.text = D.money(g.money)
-	stat.money.add_theme_color_override("font_color", INK if g.money >= 0 else Color("d9534f"))
+	stat.money.add_theme_color_override("font_color", INK if g.money >= 0 else Color("ff6b5e"))
 	stat.date.text = g.date_text()
 	stat.visitors.text = str(g.visitors.people_count())
 	stat.stars.text = "%.1f" % g.stars
 	stat.eco.text = _eco_text()
 	stat.eco.add_theme_color_override("font_color", _health_color(g.eco.health / 100.0) if g.eco.health < 70.0 and g.eco.understanding() >= 0.08 else INK)
-	stat.weather.text = str(D.WEATHER[g.weather].name) + (" (drought)" if g.drought else "")
+	var here: String = g.weather_at(view_tile)
+	stat.weather.text = "%s, %s" % [D.WEATHER[here].name, ["forest", "valley", "wetland", "desert", "alpine"][g.world.biome[World.ti(view_tile)]]]
 	stat.safety.text = "%d%%" % int(g.safety)
 	stat.research.text = str(int(g.research))
 	for b in speed_buttons:

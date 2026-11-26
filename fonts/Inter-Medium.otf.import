@@ -2,13 +2,13 @@
 
 importer="font_data_dynamic"
 type="FontFile"
-uid="uid://qwo5dr8wm66u"
-path="res://.godot/imported/Fredoka.ttf-298377900bfb6872c6093eeb33bab54d.fontdata"
+uid="uid://b2hsa1mdtnc3v"
+path="res://.godot/imported/Inter-Medium.otf-b31508300914ccb0df6f18bac61918a2.fontdata"
 
 [deps]
 
-source_file="res://fonts/Fredoka.ttf"
-dest_files=["res://.godot/imported/Fredoka.ttf-298377900bfb6872c6093eeb33bab54d.fontdata"]
+source_file="res://fonts/Inter-Medium.otf"
+dest_files=["res://.godot/imported/Inter-Medium.otf-b31508300914ccb0df6f18bac61918a2.fontdata"]
 
 [params]
 
