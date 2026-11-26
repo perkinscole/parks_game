@@ -17,6 +17,7 @@ class Rig:
 	var last := Vector2.ZERO
 	var yaw := 0.0
 	var tilt := 0.0
+	var supplied := false
 
 var game: Game
 var land: Terrain3D
@@ -29,6 +30,12 @@ var _ring: MeshInstance3D
 var _count := {}
 var _car_keys: Array[String] = []
 var _car_fit := {}
+var _walk := {} # character name -> {frames, fit}
+var _visitor_models: Array[String] = []
+# real-world sizes (in tiles of about 8 m, nudged up so animals stay findable) and the turn that points each supplied model's head along +X
+const ANIMAL_FIT := {"elk": [0.36, 90.0, "length"], "bear": [0.3, 123.0, "length"], "wolf": [0.24, 90.0, "length"], "fox": [0.17, 90.0, "length"],
+	"goat": [0.23, 90.0, "length"], "bighorn": [0.24, 90.0, "length"], "beaver": [0.16, 90.0, "length"], "trout": [0.13, 90.0, "length"],
+	"salamander": [0.11, 90.0, "length"], "pika": [0.09, 90.0, "length"], "heron": [0.2, 90.0, "height"], "eagle": [0.36, 90.0, "length"]}
 
 
 func setup(g: Game, terrain: Terrain3D) -> void:
@@ -46,6 +53,19 @@ func setup(g: Game, terrain: Terrain3D) -> void:
 			_car_keys.append("car_" + name)
 	if _car_keys.is_empty():
 		_car_keys.append("car")
+	# supplied walking characters (models/people/*.glb), baked into walk-cycle frames
+	for name in ["person1", "person2", "person3", "ranger", "maint", "eco"]:
+		var frames := Models.walk_frames(self, name, 6)
+		if frames.is_empty():
+			continue
+		var box: AABB = frames[0].get_aabb()
+		var sc := 0.235 / maxf(box.size.y, 0.0001)
+		var c := box.get_center()
+		_walk[name] = {frames = frames.size(), fit = Transform3D(Basis().scaled(Vector3(sc, sc, sc)), Vector3(-c.x * sc, -box.position.y * sc, -c.z * sc))}
+		for f in frames.size():
+			meshes["px_%s_%d" % [name, f]] = frames[f]
+		if name.begins_with("person"):
+			_visitor_models.append(name)
 	for key: String in meshes:
 		var mmi := MultiMeshInstance3D.new()
 		var mm := MultiMesh.new()
@@ -54,12 +74,13 @@ func setup(g: Game, terrain: Terrain3D) -> void:
 		mm.mesh = meshes[key]
 		var cap := MAX_PEOPLE
 		if key.begins_with("car"): cap = MAX_CARS
+		elif key.begins_with("px_"): cap = 420
 		elif key == "leg" or key == "arm": cap = MAX_PEOPLE * 2
 		elif key.begins_with("hat"): cap = 64
 		mm.instance_count = cap
 		mm.visible_instance_count = 0
 		mmi.multimesh = mm
-		if not _car_fit.has(key):
+		if not _car_fit.has(key) and not key.begins_with("px_"):
 			mmi.material_override = land.mat
 		mmi.custom_aabb = AABB(Vector3(-10, -5, -10), Vector3(World.W + 20, 40, World.H + 20))
 		add_child(mmi)
@@ -97,8 +118,17 @@ func _yaw_z(d: Vector2) -> float:
 
 
 ## `stride` is the walk-cycle phase; pass a negative value to stand still.
-func _person(p: Vector2, facing: Vector2, shirt: Color, skin: Color, s: float, stride: float, pack: bool, hat: String = "") -> void:
+func _person(p: Vector2, facing: Vector2, shirt: Color, skin: Color, s: float, stride: float, pack: bool, hat: String = "", model: String = "") -> void:
 	var walking := stride >= 0.0
+	if _walk.has(model):
+		var w: Dictionary = _walk[model]
+		var n: int = w.frames
+		var frame := int(fposmod(stride * 0.5, TAU) / TAU * n) % n if walking else 0
+		var sx := s / 0.7
+		var at := land.ground_pos(p)
+		var base := Transform3D(Basis(Vector3.UP, _yaw_z(facing)).scaled(Vector3(sx, sx, sx)), at)
+		_put("px_%s_%d" % [model, frame], base * (w.fit as Transform3D), Color.WHITE.lerp(shirt, 0.15))
+		return
 	var swing := sin(stride) * 0.75 if walking else 0.0
 	var bob := absf(cos(stride)) * 0.025 if walking else 0.0
 	var pos := land.ground_pos(p) + Vector3(0, bob, 0)
@@ -144,7 +174,7 @@ func _process(delta: float) -> void:
 			facing = Paths.dir(s.pts, s.dist)
 		elif s.state == Staffing.S.WORKING:
 			facing = Vector2(cos(t * 3.0), sin(t * 3.0))
-		_person(s.pos, facing, shirt, Color("e9b98f"), 0.78, (t * 11.0 + s.pos.x) if moving else -1.0, false, role)
+		_person(s.pos, facing, shirt, Color("e9b98f"), 0.78, (t * 11.0 + s.pos.x) if moving else -1.0, false, role, role)
 	for key: String in _mm:
 		_mm[key].visible_instance_count = _count.get(key, 0)
 	_animals(delta)
@@ -201,12 +231,25 @@ func _group(gr) -> void:
 			var a: float = gr.id * 1.3 + k * TAU / maxf(1.0, gr.n)
 			p = base + Vector2(cos(a) * 6.0, sin(a) * 6.0)
 			facing = Vector2(-cos(a), -sin(a))
-		_person(p, facing, look.shirt, look.skin, 0.5 if look.small else 0.7, stride, pack and not look.small)
+		var who := "" if _visitor_models.is_empty() else _visitor_models[(gr.id + k) % _visitor_models.size()]
+		_person(p, facing, look.shirt, look.skin, 0.5 if look.small else 0.7, stride, pack and not look.small, "", who)
 
 
 func _make_rig(id: String) -> Rig:
 	var rig := Rig.new()
 	rig.node = Node3D.new()
+	var ext := Models.external("animals/" + id)
+	if ext != null:
+		var spec: Array = ANIMAL_FIT.get(id, [0.2, 0.0, "length"])
+		var shell := MeshInstance3D.new()
+		shell.mesh = ext
+		shell.transform = Models.fit_animal(ext, spec[0], spec[1], spec[2])
+		if id == "trout":
+			shell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		rig.node.add_child(shell)
+		rig.supplied = true
+		add_child(rig.node)
+		return rig
 	var body := MeshInstance3D.new()
 	body.mesh = Models.animal(id)
 	body.material_override = land.mat
@@ -286,6 +329,12 @@ func _animals(delta: float) -> void:
 			# diagonal pairs move together, like a trot
 			var ph := gait + (PI if (k == 1 or k == 2) else 0.0)
 			rig.legs[k].rotation.z = sin(ph) * 0.6 if a.moving else 0.0
+		if rig.supplied:
+			# realistic models have no joints: give them a walking rock and bob instead
+			scale_f = 1.0
+			if a.moving and id != "eagle" and id != "trout":
+				pos.y += absf(sin(gait)) * 0.006
+				basis = basis * Basis(Vector3.BACK, sin(gait) * 0.05)
 		rig.node.transform = Transform3D(basis.scaled(Vector3(scale_f, scale_f, scale_f)), pos)
 	for a in _rigs.keys():
 		if not alive.has(a):

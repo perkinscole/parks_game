@@ -34,3 +34,14 @@ Trees are drawn thousands at a time, so keep them low-poly (a few hundred triang
   (use `spruce`, `pine` or `aspen` as the name to replace that tree). Delete the images to return to
   the built-in trees.
 - `optional/` holds earlier, lighter Meshy trees and a boulder that are not used.
+
+## People and animals
+
+- `people/` holds six Meshy characters with Meshy's walking animation (`person1`-`person3` are visitors;
+  `ranger`, `maint` and `eco` are staff). At startup the game bakes each walk cycle into a handful of
+  poses so hundreds of walkers can be drawn at once. Any rigged `.glb` with one animation clip works.
+- `animals/` holds one model per species, named by species id (`elk.glb`, `bear.glb`, ...). They are
+  static models, so animals move, turn and bob but do not swing their legs. Their size and facing are
+  set in `ANIMAL_FIT` in `scripts/agents3d.gd`.
+
+Delete a file to return to the built-in version of that model.

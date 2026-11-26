@@ -336,6 +336,110 @@ static func card_tree(name: String, height: float) -> ArrayMesh:
 	_cache[key] = mesh
 	return mesh
 
+## Bakes a rigged, animated character (models/people/<name>.glb, e.g. Meshy's
+## walking clip) into `count` static meshes, one per step of the walk cycle,
+## so hundreds of walkers can be drawn in batches. `host` must be in the tree.
+## Returns [] when the file is missing or has no usable animation.
+static func walk_frames(host: Node, name: String, count: int) -> Array:
+	var out: Array = []
+	var path := "res://models/people/%s.glb" % name
+	if not FileAccess.file_exists(path):
+		return out
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	if doc.append_from_file(path, state) != OK:
+		return out
+	var scene: Node = doc.generate_scene(state)
+	if scene == null:
+		return out
+	host.add_child(scene)
+	var player: AnimationPlayer = null
+	var skel: Skeleton3D = null
+	var skinned: MeshInstance3D = null
+	var stack: Array = [scene]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node is AnimationPlayer: player = node
+		elif node is Skeleton3D: skel = node
+		elif node is MeshInstance3D and node.mesh != null and skinned == null: skinned = node
+		stack.append_array(node.get_children())
+	if player != null and skel != null and skinned != null and not player.get_animation_list().is_empty():
+		var clip: String = player.get_animation_list()[0]
+		var length := player.get_animation(clip).length
+		var skin := skinned.skin
+		var to_root: Transform3D = (scene as Node3D).global_transform.affine_inverse() * skel.global_transform
+		player.play(clip)
+		for f in count:
+			player.seek(length * f / count, true)
+			player.advance(0.0)
+			var mats: Array[Transform3D] = []
+			if skin != null:
+				for b in skin.get_bind_count():
+					var bone := skin.get_bind_bone(b)
+					if bone < 0:
+						bone = skel.find_bone(skin.get_bind_name(b))
+					mats.append(to_root * skel.get_bone_global_pose(maxi(bone, 0)) * skin.get_bind_pose(b))
+			else:
+				for b in skel.get_bone_count():
+					mats.append(to_root * skel.get_bone_global_pose(b) * skel.get_bone_global_rest(b).affine_inverse())
+			var mesh := ArrayMesh.new()
+			for si in skinned.mesh.get_surface_count():
+				var src := skinned.mesh.surface_get_arrays(si)
+				var verts: PackedVector3Array = src[Mesh.ARRAY_VERTEX]
+				var norms = src[Mesh.ARRAY_NORMAL]
+				var bones = src[Mesh.ARRAY_BONES]
+				var weights = src[Mesh.ARRAY_WEIGHTS]
+				if bones == null or weights == null:
+					continue
+				var per: int = bones.size() / verts.size()
+				var nv := PackedVector3Array()
+				var nn := PackedVector3Array()
+				nv.resize(verts.size())
+				nn.resize(verts.size())
+				for vi in verts.size():
+					var p := Vector3.ZERO
+					var q := Vector3.ZERO
+					for k in per:
+						var wgt: float = weights[vi * per + k]
+						if wgt <= 0.0:
+							continue
+						var m: Transform3D = mats[bones[vi * per + k]]
+						p += (m * verts[vi]) * wgt
+						if norms != null:
+							q += (m.basis * norms[vi]) * wgt
+					nv[vi] = p
+					nn[vi] = q.normalized() if norms != null else Vector3.UP
+				var arrays := []
+				arrays.resize(Mesh.ARRAY_MAX)
+				arrays[Mesh.ARRAY_VERTEX] = nv
+				arrays[Mesh.ARRAY_NORMAL] = nn
+				arrays[Mesh.ARRAY_TEX_UV] = src[Mesh.ARRAY_TEX_UV]
+				arrays[Mesh.ARRAY_INDEX] = src[Mesh.ARRAY_INDEX]
+				mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+				var mat := skinned.get_active_material(si)
+				if mat != null:
+					mesh.surface_set_material(mesh.get_surface_count() - 1, mat)
+			if mesh.get_surface_count() > 0:
+				out.append(mesh)
+	host.remove_child(scene)
+	scene.free()
+	return out
+
+
+## Fit for a supplied animal: standing on the ground, centred, turned by
+## `yaw_deg` so its head points along +X, and scaled so `axis` ("length",
+## "height" or "span") measures `size`.
+static func fit_animal(mesh: Mesh, size: float, yaw_deg: float, axis: String = "length") -> Transform3D:
+	var box := mesh.get_aabb()
+	var basis := Basis(Vector3.UP, deg_to_rad(yaw_deg))
+	var extent := maxf(box.size.x, box.size.z)
+	if axis == "height":
+		extent = box.size.y
+	var s := size / maxf(extent, 0.0001)
+	basis = basis.scaled(Vector3(s, s, s))
+	var c := box.get_center()
+	return Transform3D(basis, basis * Vector3(-c.x, -box.position.y, -c.z))
+
 static func bush() -> ArrayMesh:
 	if _cache.has("bush"):
 		return _cache["bush"]

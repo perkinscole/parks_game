@@ -844,6 +844,13 @@ func _dev_hooks(args: Dictionary) -> void:
 		if c2.size() > 2: dist = float(c2[2])
 		if c2.size() > 3: yaw = deg_to_rad(float(c2[3]))
 		if c2.size() > 4: pitch = deg_to_rad(float(c2[4]))
+	if args.has("follow"): # point the camera at the first animal of a species, e.g. --follow=elk
+		for an in game.eco.animals:
+			if D.SPECIES[an.sp].id == args.follow:
+				target = Vector3(an.pos.x / D.TILE, 0, an.pos.y / D.TILE)
+				dist = float(args.get("dist", "3.0"))
+				pitch = 0.6
+				break
 	if args.has("panel"):
 		hud.toggle_panel(args.panel)
 	if args.has("overlay"):
