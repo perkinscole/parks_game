@@ -226,6 +226,15 @@ static func structure(ci: CanvasItem, kind, r: Rect2) -> void:
 				line(ci, r, 0.1, 0.42, 0.9, 0.42, Color("f6d44d"), 0.06)
 			else:
 				ci.draw_polyline(PackedVector2Array([P(r, 0.12, 0.4), P(r, 0.32, 0.28), P(r, 0.5, 0.36), P(r, 0.68, 0.28), P(r, 0.88, 0.4)]), Color("f6d44d"), r.size.x * 0.05)
+		"path":
+			poly(ci, r, [0.04, 0.9, 0.3, 0.5, 0.96, 0.5, 0.96, 0.9], Color("7d9a4f"))
+			for k in 6:
+				circ(ci, r, 0.14 + k * 0.14, 0.82 - k * 0.07 - (0.04 if k % 2 == 0 else 0.0), 0.035, Color("b89a6a"))
+		"steps":
+			poly(ci, r, [0.04, 0.9, 0.5, 0.2, 0.96, 0.9], Color("7d9a4f"))
+			for k in 5:
+				box(ci, r, 0.26 + k * 0.07, 0.78 - k * 0.12, 0.6 + k * 0.03, 0.86 - k * 0.12, Color("c9c2b0"))
+			line(ci, r, 0.68, 0.86, 0.8, 0.3, Color("5a3a22"), 0.04)
 		"switchback":
 			poly(ci, r, [0.06, 0.9, 0.5, 0.12, 0.94, 0.9], Color("7d9a4f"))
 			ci.draw_polyline(PackedVector2Array([P(r, 0.24, 0.86), P(r, 0.72, 0.74), P(r, 0.34, 0.6), P(r, 0.62, 0.46), P(r, 0.44, 0.34), P(r, 0.5, 0.2)]), Color("e8d3a0"), r.size.x * 0.06)

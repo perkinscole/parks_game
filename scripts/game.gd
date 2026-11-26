@@ -34,6 +34,9 @@ var visitors_today := 0
 var visitors_yesterday := 0
 var turned_away_today := 0
 var serious_incidents := 0
+var deaths := 0
+var level := 1
+signal leveled(lv: int)
 var last_serious_day := -99
 var comments := {}
 var sat_by_type := {} # visitor type id -> [decayed sum, decayed count]
@@ -110,6 +113,7 @@ func date_text() -> String:
 func _on_hour(h: int) -> void:
 	eco.hourly()
 	update_appeal()
+	_check_level()
 	var ecologists := staffing.count("eco")
 	if ecologists > 0:
 		add_research(ecologists * 0.12 * (0.5 + eco.health / 100.0))
@@ -140,7 +144,7 @@ func _new_day() -> void:
 	visitors_yesterday = visitors_today
 	visitors_today = 0
 	turned_away_today = 0
-	safety = minf(100.0, safety + 2.0)
+	safety = minf(100.0, safety + 4.0)
 	for k in comments.keys():
 		comments[k] = comments[k] * 0.6
 		if comments[k] < 0.5:
@@ -152,6 +156,7 @@ func _new_day() -> void:
 	staffing.daily()
 	grants.daily()
 	update_appeal()
+	_check_level()
 	if (day - 1) % D.DAYS_PER_SEASON == 0:
 		say("%s has arrived." % D.SEASONS[season()], "info")
 	save_game() # autosave every morning
@@ -321,7 +326,63 @@ func _lot_reachable() -> bool:
 # ----------------------------------------------------------- player actions
 
 ## Tries to build. Returns "" on success or the reason for failure.
+## Level a building or tool opens at.
+func unlock_level(tool) -> int:
+	var def: Dictionary = D.BUILD[tool] if tool is int else D.TOOLS[tool]
+	return def.get("level", 1)
+
+
+## How far along the park is toward its next level: [[label, have, need], ...]
+func level_progress() -> Array:
+	if level >= D.LEVELS.size():
+		return []
+	var nx: Dictionary = D.LEVELS[level]
+	var out := [["Visitors welcomed", float(total_visitors), float(nx.visitors)], ["Visitor rating", stars, float(nx.stars)]]
+	if nx.research > 0:
+		out.append(["Research done", research_total, float(nx.research)])
+	return out
+
+
+func _check_level() -> void:
+	if level >= D.LEVELS.size():
+		return
+	for row in level_progress():
+		if row[1] < row[2]:
+			return
+	level += 1
+	add_money(2500.0 * level, "Federal funding")
+	say("The park is now a %s! New things to build are unlocked, with a %s grant to start on them." % [D.LEVELS[level - 1].name, D.money(2500.0 * level)], "good")
+	leveled.emit(level)
+
+
+## Lays or upgrades a trail of the given grade (0 rough, 1 graded, 2 built).
+func build_trail(t: Vector2i, grade: int) -> String:
+	var i := World.ti(t)
+	var price: int = [5, 12, 45][grade]
+	if world.build[i] == D.B.TRAIL:
+		if world.trail_grade[i] >= grade:
+			return "Already a trail"
+		if money < price:
+			return "Not enough money"
+		world.trail_grade[i] = grade
+		add_money(-price, "Construction")
+		world.changed.emit(Rect2i(t.x - 1, t.y - 1, 3, 3))
+		return ""
+	var why := world.can_build(D.B.TRAIL, t)
+	if why != "":
+		return why
+	var cost := world.cost_at(D.B.TRAIL, t) * price / 12
+	if money < cost:
+		return "Not enough money"
+	world.place(D.B.TRAIL, t)
+	world.trail_grade[i] = grade
+	add_money(-cost, "Construction")
+	return ""
+
+
 func try_build(kind: int, t: Vector2i, quiet: bool = false) -> String:
+	if unlock_level(kind) > level:
+		return "Unlocks when the park is a %s" % D.LEVELS[unlock_level(kind) - 1].name
 	var why := world.can_build(kind, t)
 	if why != "":
 		return why
@@ -406,7 +467,7 @@ static func read_save() -> Dictionary:
 	if f == null:
 		return {}
 	var d = f.get_var()
-	return d if d is Dictionary and d.get("version", 0) == 2 else {}
+	return d if d is Dictionary and d.get("version", 0) == 3 else {}
 
 
 ## Everything that differs from a freshly generated map with this seed.
@@ -419,7 +480,7 @@ func save_game() -> bool:
 	for s in staffing.staff:
 		roles.append(s.role)
 	var d := {
-		version = 2, seed = map_seed, day = day, minutes = minutes, money = money, fee = fee, research = research,
+		version = 3, level = level, deaths = deaths, trail_grade = world.trail_grade, seed = map_seed, day = day, minutes = minutes, money = money, fee = fee, research = research,
 		research_total = research_total, techs = techs, safety = safety, ratings = ratings, total_visitors = total_visitors,
 		serious = serious_incidents, last_serious = last_serious_day, climate = climate, zone_weather = zone_weather,
 		zone_next = zone_next, zone_dry = zone_dry, discoveries = discoveries, comments = comments,
@@ -450,6 +511,10 @@ func load_game(d: Dictionary) -> void:
 	ratings.assign(d.ratings)
 	total_visitors = d.total_visitors
 	serious_incidents = d.serious
+	level = d.get("level", 1)
+	deaths = d.get("deaths", 0)
+	if d.has("trail_grade"):
+		world.trail_grade = d.trail_grade
 	last_serious_day = d.last_serious
 	climate = d.climate
 	zone_weather = d.zone_weather

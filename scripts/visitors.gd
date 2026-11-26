@@ -31,6 +31,8 @@ class Group:
 	var sat := 52.0
 	var cur := Vector2i()
 	var last_tile := Vector2i(-1, -1)
+	var registered := false # signed the trailhead register
+	var night_checked := false
 	var scen_sum := 0.0
 	var scen_n := 0
 	var litter_seen := 0
@@ -205,8 +207,19 @@ func _update_group(gr: Group, dt: float) -> void:
 			var here := World.tile_of(gr.pos_at(gr.dist))
 			var ahead := World.tile_of(gr.pos_at(gr.dist + D.TILE))
 			var climb: float = w.height[World.ti(ahead)] - w.height[World.ti(here)]
-			var pace := 1.0 / (1.0 + (2.4 if climb > 0.0 else 1.0) * maxf(0.0, absf(climb) - 0.15))
+			var hi := World.ti(here)
+			var grade: int = w.trail_grade[hi] if w.build[hi] == D.B.TRAIL else 1
+			var pace: float = [0.85, 1.0, 1.1][grade] / (1.0 + (2.4 if climb > 0.0 else 1.0) * [1.4, 1.0, 0.45][grade] * maxf(0.0, absf(climb) - 0.15))
 			gr.dist += gr.speed * dt * maxf(pace, 0.22)
+			# still out on the trail when the light goes
+			if not gr.night_checked and (g.minutes >= 20.5 * 60.0 or g.minutes < 5.0 * 60.0) and w.build[hi] == D.B.TRAIL:
+				gr.night_checked = true
+				if w.hut_cover[hi] == 1:
+					_think(gr, "We made it to shelter for the night")
+					gr.sat += 4.0
+				elif Vector2(here - gr.lot).length() > 14.0 and rng.randf() < (0.08 if gr.registered else 0.25):
+					g.staffing.create("night", gr, here)
+					return
 			var t := World.tile_of(gr.pos_at(gr.dist))
 			if t != gr.last_tile:
 				gr.last_tile = t
@@ -300,8 +313,15 @@ func next_leg(gr: Group) -> void:
 	gr.state = S.WALK
 
 
+func remove_group(gr: Group) -> void:
+	w.park_used[World.ti(gr.lot)] &= ~(1 << gr.slot)
+	gr.state = S.GONE
+
+
 func _enter_tile(gr: Group, t: Vector2i) -> void:
 	var i := World.ti(t)
+	if w.sign_cover[i] == 1 and not gr.registered and w.build[i] == D.B.TRAIL:
+		gr.registered = true # they have seen a map and know the way back
 	gr.walked += 1
 	w.footfall[i] += gr.n * 0.5
 	if w.rest_cover[i] == 1:

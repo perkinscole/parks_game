@@ -852,6 +852,8 @@ func _brush_tiles(c: Vector2i) -> Array[Vector2i]:
 func _drag_tiles(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 	if tool is String and tool == "switchback":
 		return _switchback(a, b)
+	if tool is String and (tool == "path" or tool == "steps"):
+		return _line(a, b)
 	if tool is int and tool in LINEAR:
 		return _line(a, b)
 	return _rect(a, b)
@@ -867,6 +869,8 @@ func _tile_ok(t: Vector2i) -> bool:
 		return world.can_terraform(t)
 	match tool:
 		"switchback": return world.can_build(D.B.TRAIL, t) == ""
+		"path": return world.can_build(D.B.TRAIL, t) == ""
+		"steps": return world.can_build(D.B.TRAIL, t) == "" or (world.build[i] == D.B.TRAIL and world.trail_grade[i] < 2)
 		"bulldoze": return world.build[i] != D.B.NONE and t != world.entry
 		"weed": return world.invasive[i] > 0.0 and world.inv_seen[i] == 1
 		"plant":
@@ -977,6 +981,12 @@ func _apply_drag() -> void:
 		else:
 			var done := false
 			match tool:
+				"path", "steps":
+					var why3 := game.build_trail(t, 0 if tool == "path" else 2)
+					if why3 == "Not enough money":
+						game.say("Not enough money to finish the trail.", "warn")
+						break
+					done = why3 == ""
 				"switchback":
 					var why2 := game.try_build(D.B.TRAIL, t, true)
 					if why2 == "Not enough money":
@@ -1200,6 +1210,7 @@ func _dev_hooks(args: Dictionary) -> void:
 
 
 func _report() -> void:
+	print("level %d  deaths %d  emergencies %s  rangers %d" % [game.level, game.deaths, game.staffing.tally, game.staffing.count("ranger")])
 	print("--- day %d  money %s  stars %.2f  eco %.1f  safety %.0f  appeal %.1f  demand %.0f  fair fee %.1f" % [
 		game.day, D.money(game.money), game.stars, game.eco.health, game.safety, game.appeal, game.demand, game.fair_fee])
 	print("visitors total %d  yesterday %d  now %d  litter %d  invasive %d  serious %d  research %.0f" % [

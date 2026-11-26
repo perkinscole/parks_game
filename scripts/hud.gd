@@ -78,6 +78,7 @@ class ToolButton extends Button:
 	var cost_text := ""
 	var label_text := ""
 	var locked := false
+	var lock_text := ""
 	var compact := false # icon only, for the category bar
 	func _draw() -> void:
 		var s := minf(size.x - 30.0, size.y - 44.0)
@@ -110,7 +111,9 @@ class ToolButton extends Button:
 		draw_string(f, Vector2((size.x - nw) * 0.5, size.y - 20.0), label_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("e9eef0"))
 		draw_string(f, Vector2((size.x - wd) * 0.5, size.y - 6.0), cost_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("f2c879"))
 		if locked:
-			draw_rect(Rect2(Vector2.ZERO, size), Color(0.07, 0.09, 0.11, 0.72))
+			draw_rect(Rect2(Vector2.ZERO, size), Color(0.07, 0.09, 0.11, 0.78))
+			var lw := f.get_string_size(lock_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+			draw_string(f, Vector2((size.x - lw) * 0.5, size.y * 0.45), lock_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("ffcf7a"))
 
 var game: Game
 var font: Font
@@ -181,6 +184,7 @@ func setup(g: Game, f: Font) -> void:
 	_build_guide()
 	_build_issues()
 	game.toast.connect(_on_toast)
+	game.leveled.connect(_on_level)
 	_show_category(0)
 	_update_stats()
 	_update_objectives()
@@ -568,13 +572,15 @@ func _update_card() -> void:
 	var per_tile: bool = tool is String or tool == D.B.ROAD or tool == D.B.TRAIL or tool == D.B.PARKING
 	var cost: float = def.cost
 	# the money line changes as funds do, so it is refreshed every time
-	if per_tile:
+	if game.unlock_level(tool) > game.level:
+		card_after.text = "Locked. Unlocks when the park becomes a %s (level %d)." % [D.LEVELS[game.unlock_level(tool) - 1].name, game.unlock_level(tool)]
+	elif per_tile:
 		card_after.text = "You have %s: enough for about %d tiles. The total shows by the pointer as you drag." % [D.money(game.money), int(game.money / maxf(cost, 1.0))]
 	elif cost > game.money:
 		card_after.text = "You have %s. You need %s more." % [D.money(game.money), D.money(cost - game.money)]
 	else:
 		card_after.text = "You have %s. After buying: %s." % [D.money(game.money), D.money(game.money - cost)]
-	card_after.add_theme_color_override("font_color", Color("ff8a70") if cost > game.money else Color("a3afb6"))
+	card_after.add_theme_color_override("font_color", Color("ffcf7a") if game.unlock_level(tool) > game.level else (Color("ff8a70") if cost > game.money else Color("a3afb6")))
 	if _same_tool(tool, _card_tool):
 		return
 	_card_tool = tool
@@ -628,10 +634,10 @@ func _show_category(i: int) -> void:
 		b.toggle_mode = true
 		b.focus_mode = Control.FOCUS_NONE
 		# a full tray uses narrower buttons so it stays clear of the messages
-		b.custom_minimum_size = Vector2(98 if D.CATEGORIES[i].tools.size() <= 5 else 86, 86)
+		b.custom_minimum_size = Vector2(98 if D.CATEGORIES[i].tools.size() <= 5 else (86 if D.CATEGORIES[i].tools.size() == 6 else 80), 86)
 		var def: Dictionary = D.BUILD[tool] if tool is int else D.TOOLS[tool]
 		b.cost_text = D.money(def.cost)
-		b.label_text = def.name if str(def.name).length() <= 14 else str(def.name).substr(0, 13) + "."
+		b.label_text = def.name if str(def.name).length() <= 13 else str(def.name).substr(0, 12) + "."
 		var unit := ""
 		if tool is String or tool == D.B.ROAD or tool == D.B.TRAIL or tool == D.B.PARKING:
 			unit = " per tile"
@@ -639,6 +645,11 @@ func _show_category(i: int) -> void:
 		if tool is int and def.upkeep > 0.9:
 			b.tooltip_text += "\nUpkeep: %s/day" % D.money(def.upkeep)
 		b.locked = tool is String and tool == "plant" and not game.has_tech("restore")
+		if b.locked:
+			b.lock_text = "Research"
+		if game.unlock_level(tool) > game.level:
+			b.locked = true
+			b.lock_text = "Level %d" % game.unlock_level(tool)
 		b.button_pressed = _same_tool(tool, current_tool)
 		b.pressed.connect(func(): select_tool(null if _same_tool(tool, current_tool) else tool))
 		b.mouse_entered.connect(func(): _hover_tool = tool)
@@ -651,6 +662,9 @@ func _same_tool(a, b) -> bool:
 
 
 func select_tool(tool) -> void:
+	if tool != null and game.unlock_level(tool) > game.level:
+		game.say("That unlocks when the park becomes a %s (level %d). Open the Park panel to see what that takes." % [D.LEVELS[game.unlock_level(tool) - 1].name, game.unlock_level(tool)], "info")
+		tool = null
 	if tool is String and tool == "plant" and not game.has_tech("restore"):
 		game.say("Planting native trees requires the Native Restoration research.", "info")
 		tool = null
@@ -748,6 +762,16 @@ func _fill_panel() -> void:
 
 func _panel_park() -> void:
 	var g := game
+	_kv("Park level", "%d: %s" % [g.level, D.LEVELS[g.level - 1].name], ACCENT)
+	var prog := g.level_progress()
+	if prog.is_empty():
+		side_body.add_child(_para("The highest level there is."))
+	else:
+		side_body.add_child(_para("To become a %s:" % D.LEVELS[g.level].name))
+		for row in prog:
+			var have: float = row[1]
+			var need: float = row[2]
+			_kbar(row[0], clampf(have / maxf(need, 0.001), 0.0, 1.0), ("%.1f / %.1f" % [have, need]) if need < 10.0 else "%d / %d" % [int(have), int(need)])
 	_kv("Status", "Open" if g.open else "Closed", GREEN if g.open else Color("ff6b5e"))
 	_kbar("Visitor rating", g.stars / 5.0, "%.1f" % g.stars)
 	if g.eco.understanding() >= 0.08:
@@ -770,6 +794,7 @@ func _panel_park() -> void:
 		_kv("Tiles on fire", str(g.world.fire_tiles.size()), Color("ff6b5e"))
 	_kv("Trail length", "%d tiles" % g.world.trail_tiles.size())
 	_kv("Serious incidents", str(g.serious_incidents))
+	_kv("Visitor deaths", str(g.deaths), Color("ff6b5e") if g.deaths > 0 else INK)
 	_head("What visitors are saying")
 	var keys := g.comments.keys()
 	keys.sort_custom(func(a, b): return g.comments[a] > g.comments[b])
@@ -1007,7 +1032,7 @@ func _build_misc() -> void:
 	toasts.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	toasts.offset_left = 8
 	toasts.offset_bottom = -64
-	toasts.custom_minimum_size.x = 330
+	toasts.custom_minimum_size.x = 306
 	toasts.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	toasts.add_theme_constant_override("separation", 4)
 	root.add_child(toasts)
@@ -1063,7 +1088,7 @@ func _on_toast(text: String, kind: String, tile: Vector2i) -> void:
 	sb.border_color = col
 	p.add_theme_stylebox_override("panel", sb)
 	var l := _para(text, 13, INK)
-	l.custom_minimum_size.x = 300
+	l.custom_minimum_size.x = 280
 	p.add_child(l)
 	if tile.x >= 0:
 		p.tooltip_text = "Click to go there"
@@ -1100,7 +1125,7 @@ func _update_objectives() -> void:
 		["Build a Parking Lot beside the road", w.lot_tiles.size() >= 4,
 			"Drag a Parking Lot next to the road. Each car needs a space, and a full lot turns families away. Pavement sheds oily water though, so keep it back from streams.", 0],
 		["Lay a Trail from the parking lot", w.trail_tiles.size() >= 8,
-			"Lay a Trail out from the lot. On steep ground use the Switchback Trail: hikers crawl up steep paths. A good trail gathers footsteps into one line, which spares everything beside it.", 0],
+			"Lay a Trail out from the lot. Rough Path is cheapest but dangerous on slopes; Trail is the everyday choice. A good trail gathers footsteps into one line, which spares everything beside it.", 0],
 		["Build a Scenic Overlook on the trail", w.count_kind(D.B.OVERLOOK) > 0,
 			"Build a Scenic Overlook beside the trail. Watch the scenery score as you move it: high ground and named landmarks score best. This is what people came for.", 2],
 		["Add a Restroom and a Trash bin", w.count_kind(D.B.RESTROOM) > 0 and w.count_kind(D.B.BIN) > 0,
@@ -1201,6 +1226,36 @@ func _issues() -> Array:
 		out.append([1, "Nothing for visitors to do", "People need a reason to come. Build a Scenic Overlook, Picnic Area or Visitor Center on a trail.", null])
 	if g.safety < 70.0:
 		out.append([2 if g.safety < 45.0 else 1, "Safety is at %d%%" % int(g.safety), "Hikers are getting hurt or lost. Hire rangers, put Safety Signage and Trailhead Kiosks on long or steep trails, and avoid steep straight climbs.", null])
+	# steep trail nobody has been warned about, and trail a long way from any help
+	var steep_t = null
+	var steep_n := 0
+	var far_t = null
+	var far_d := 0.0
+	var posts: Array = []
+	for s in w.structures.values():
+		if s.kind == D.B.RANGER or s.kind == D.B.SAR:
+			posts.append(Vector2(s.tile))
+	for k in range(0, w.trail_tiles.size(), 3):
+		var tt: Vector2i = w.trail_tiles[k]
+		var ti := World.ti(tt)
+		if w.sign_cover[ti] == 0 and w.trail_grade[ti] < 2 and w.slope_at(tt) > 0.7:
+			steep_n += 1
+			if steep_t == null:
+				steep_t = tt
+		var near := 1e9
+		for pp: Vector2 in posts:
+			near = minf(near, pp.distance_to(Vector2(tt)))
+		if near > far_d and near < 1e8:
+			far_d = near
+			far_t = tt
+	if steep_n > 0:
+		out.append([1, "Steep trail with no warning signs", "People are climbing ground steep enough to fall on with nothing to warn them. Put Safety Signage there, or rebuild it as a Built Trail or a Switchback.", steep_t])
+	if far_d > 45.0 and w.count_kind(D.B.HELIPAD) == 0 and g.open:
+		out.append([1, "Trails %d tiles from any help" % int(far_d), "If someone is badly hurt out there, a ranger on foot will not arrive in time. Add call boxes and a hut along the way, and a Rescue Post nearer the far end.", far_t])
+	for inc in g.staffing.incidents:
+		if inc.severity >= 3:
+			out.append([2, "%s: life-threatening" % inc.title, "They can hold on about %d more seconds. %s" % [int(inc.timer), ("Help arrives in about %d seconds." % int(inc.eta)) if inc.eta >= 0.0 else "No rescue team is on the way: only a ranger on foot can reach them."], inc.tile])
+			break
 	if g.open and g.visitors.people_count() > 0 and g.staffing.count("ranger") == 0:
 		out.append([1, "No rangers on duty", "Nobody will find a lost hiker or treat an injury. Build a Ranger Station and hire a ranger in the Staff panel.", null])
 	if w.litter_tiles.size() > 10:
@@ -1230,6 +1285,19 @@ func _issues() -> Array:
 	return out
 
 
+func _on_level(lv: int) -> void:
+	_show_category(cat_index)
+	var names: Array = []
+	for kind: int in D.BUILD:
+		if D.BUILD[kind].get("level", 1) == lv:
+			names.append(D.BUILD[kind].name)
+	for id: String in D.TOOLS:
+		if D.TOOLS[id].get("level", 1) == lv:
+			names.append(D.TOOLS[id].name)
+	var info: Dictionary = D.LEVELS[lv - 1]
+	_show_pages([["Level %d: %s" % [lv, info.name], "%s\n\nNow unlocked: %s." % [info.story, ", ".join(names)]]], false)
+
+
 func _build_issues() -> void:
 	issues_box = PanelContainer.new()
 	issues_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -1250,7 +1318,7 @@ func _update_issues() -> void:
 	# while the first-day guide is running, its own steps cover the basics
 	if guide.visible and dim.visible:
 		list = []
-	issues_box.visible = not list.is_empty()
+	issues_box.visible = not list.is_empty() and not side.visible
 	for c in issues_list.get_children():
 		issues_list.remove_child(c)
 		c.queue_free()

@@ -20,6 +20,9 @@ var sid := PackedInt32Array() # structure id per tile
 var litter := PackedByteArray()
 var invasive := PackedFloat32Array()
 var disturb := PackedFloat32Array()
+var trail_grade := PackedByteArray() # 0 rough path, 1 graded trail, 2 built trail
+var call_cover := PackedByteArray()
+var hut_cover := PackedByteArray()
 var quality := PackedFloat32Array()
 var park_used := PackedByteArray()
 var rare := PackedFloat32Array() # orchid colony health
@@ -104,6 +107,9 @@ func generate(seed_val: int) -> void:
 	elev.resize(n); elev.fill(0.0)
 	invasive.resize(n); invasive.fill(0.0)
 	disturb.resize(n); disturb.fill(0.0)
+	trail_grade.resize(n); trail_grade.fill(1)
+	call_cover.resize(n)
+	hut_cover.resize(n)
 	quality.resize(n); quality.fill(0.0)
 	rare.resize(n); rare.fill(0.0)
 	footfall.resize(n); footfall.fill(0.0)
@@ -635,7 +641,7 @@ func scenic(t: Vector2i) -> float:
 						D.T.GRASS: s += (0.45 if trees[i] > 0 else 0.3) * w
 				D.B.ROAD, D.B.GATE: s -= 1.2 * w
 				D.B.PARKING: s -= 2.0 * w
-				D.B.OVERLOOK, D.B.HIDE, D.B.SIGN, D.B.BIN, D.B.TRAILHEAD, D.B.PICNIC: pass
+				D.B.OVERLOOK, D.B.HIDE, D.B.SIGN, D.B.BIN, D.B.TRAILHEAD, D.B.PICNIC, D.B.CALLBOX, D.B.HUT: pass
 				_: s -= 0.9 * w
 			s -= litter[i] * 0.8 * w
 			s -= invasive[i] * 0.6 * w
@@ -701,7 +707,7 @@ func can_build(kind: int, t: Vector2i) -> String:
 			D.B.CRAG:
 				if b != D.B.NONE: return "Occupied"
 				if ter != D.T.ROCK: return "Needs rocky foothills"
-			D.B.OVERLOOK, D.B.SIGN, D.B.HIDE:
+			D.B.OVERLOOK, D.B.SIGN, D.B.HIDE, D.B.CALLBOX, D.B.HUT:
 				if b != D.B.NONE: return "Occupied"
 				if is_water(ter): return "Can't build on water"
 			_:
@@ -872,6 +878,8 @@ func rebuild_nav() -> void:
 	bin_cover.fill(0)
 	sign_cover.fill(0)
 	rest_cover.fill(0)
+	call_cover.fill(0)
+	hut_cover.fill(0)
 	for y in H:
 		for x in W:
 			var i := idx(x, y)
@@ -886,7 +894,7 @@ func rebuild_nav() -> void:
 			walk_nav.set_point_solid(t, not is_walk)
 			if is_walk:
 				# steep going costs more, so people choose the switchbacks when there are some
-				walk_nav.set_point_weight_scale(t, (1.0 if b == D.B.TRAIL else (1.4 if b == D.B.PARKING else 2.2)) * (1.0 + 2.0 * maxf(0.0, slope_at(t) - 0.3)))
+				walk_nav.set_point_weight_scale(t, (1.0 if b == D.B.TRAIL else (1.4 if b == D.B.PARKING else 2.2)) * (1.0 + [3.0, 2.0, 0.5][trail_grade[i]] * maxf(0.0, slope_at(t) - 0.3)))
 			var staff_ok := is_walk or not is_water(ter)
 			staff_nav.set_point_solid(t, not staff_ok)
 			if staff_ok:
@@ -908,6 +916,9 @@ func rebuild_nav() -> void:
 		match s.kind:
 			D.B.BIN: _stamp(bin_cover, st, 5)
 			D.B.SIGN, D.B.TRAILHEAD: _stamp(sign_cover, st, 6)
+			D.B.CALLBOX: _stamp(call_cover, st, 9)
+			D.B.HUT: _stamp(hut_cover, st, 10)
+			D.B.CAMP, D.B.RANGER, D.B.SAR: _stamp(hut_cover, st, 6)
 			D.B.RESTROOM, D.B.VISITOR_CENTER: _stamp(rest_cover, st, 9)
 
 

@@ -16,7 +16,7 @@ const OSTEP := 1 # grid spacing of that scenery
 const GW := World.W * SUB + 1
 const GH := World.H * SUB + 1
 const LIT := [D.B.VISITOR_CENTER, D.B.RANGER, D.B.RESEARCH, D.B.SNACK, D.B.CAMP, D.B.GATE, D.B.RESTROOM]
-const NO_FOUNDATION := [D.B.BIN, D.B.SIGN, D.B.PICNIC, D.B.TRAILHEAD, D.B.CRAG, D.B.GATE, D.B.CAMP]
+const NO_FOUNDATION := [D.B.CALLBOX, D.B.HELIPAD, D.B.BIN, D.B.SIGN, D.B.PICNIC, D.B.TRAILHEAD, D.B.CRAG, D.B.GATE, D.B.CAMP]
 # footprint width (in tiles) that supplied building models are scaled to
 const EXT_WIDTH := {D.B.PICNIC: 0.42, D.B.TRAILHEAD: 0.36, D.B.HIDE: 0.62, D.B.RESTROOM: 0.8, D.B.SNACK: 0.72, D.B.GATE: 1.35,
 	D.B.OVERLOOK: 0.92, D.B.VISITOR_CENTER: 1.85, D.B.RANGER: 1.5, D.B.RESEARCH: 1.6, D.B.CAMP: 1.85, D.B.BIN: 0.3, D.B.SIGN: 0.2, D.B.CRAG: 0.9}
@@ -579,6 +579,8 @@ func _on_changed(rect: Rect2i) -> void:
 			if (_seen_burn[i] > 0) != (world.burned[i] > 0):
 				_seen_burn[i] = world.burned[i]
 				_tile_dirty = true
+			if world.build[i] == D.B.TRAIL:
+				_mask_dirty[i] = true
 			if _seen_build[i] != world.build[i] or _seen_trees[i] != world.trees[i]:
 				structural = true
 				_tile_dirty = true
@@ -975,8 +977,9 @@ func _paint_tile(x: int, y: int) -> void:
 				path_img.set_pixel(px0 + px, py0 + py, Color(0, 0, clampf(1.25 - d * 2.1, 0.0, 1.0)))
 		return
 	var lines := _centerline(_arms(x, y, road))
-	var half := 0.36 if road else 0.11
-	var soft := 0.11 if road else 0.13
+	var grade: int = world.trail_grade[i]
+	var half: float = 0.36 if road else [0.05, 0.11, 0.17][grade]
+	var soft: float = 0.11 if road else [0.16, 0.13, 0.07][grade]
 	for py in PX:
 		for px in PX:
 			var p := Vector2((px + 0.5) / PX, (py + 0.5) / PX)
@@ -991,7 +994,7 @@ func _paint_tile(x: int, y: int) -> void:
 						t = clampf((p - a).dot(ab) / len2, 0.0, 1.0)
 					best = minf(best, p.distance_to(a + ab * t))
 			var v := clampf(1.0 - (best - half) / soft, 0.0, 1.0)
-			path_img.set_pixel(px0 + px, py0 + py, Color(0, v, 0) if road else Color(v, 0, 0))
+			path_img.set_pixel(px0 + px, py0 + py, Color(0, v, 0) if road else Color(v * (0.7 if grade == 0 else 1.0), 0, 0))
 
 
 ## Mesh parts of paths: bridges and boardwalks over water, and painted lines.

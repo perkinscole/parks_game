@@ -3,8 +3,8 @@ extends RefCounted
 ## Static game data: terrain, buildings, visitors, species, research, grants.
 
 const TILE := 32
-const MAP_W := 160
-const MAP_H := 120
+const MAP_W := 224
+const MAP_H := 168
 
 ## Large regions of the park, each with its own look, wildlife and weather.
 enum BIOME { FOREST, VALLEY, WETLAND, DESERT, ALPINE }
@@ -13,8 +13,22 @@ const BIOME_NAMES := ["Montane forest", "Grassy valley", "Wetland", "Red-rock de
 enum T { DEEP, WATER, SAND, GRASS, MEADOW, FOREST, ROCK, PEAK }
 enum B {
 	NONE, ROAD, TRAIL, PARKING, GATE, VISITOR_CENTER, RESTROOM, BIN, OVERLOOK,
-	PICNIC, CAMP, SNACK, RANGER, RESEARCH, CRAG, SIGN, HIDE, TRAILHEAD
+	PICNIC, CAMP, SNACK, RANGER, RESEARCH, CRAG, SIGN, HIDE, TRAILHEAD,
+	CALLBOX, HUT, SAR, HELIPAD
 }
+
+# The park grows through four levels. Each one opens more to build, and each
+# asks for a bigger, safer, better-understood park than the last.
+const LEVELS := [
+	{name = "Local Reserve", visitors = 0, stars = 0.0, research = 0, story = ""},
+	{name = "State Park", visitors = 120, stars = 2.8, research = 0,
+		story = "Word is getting round, and the state has put us on the map. With the name comes money for proper trails and a visitor center, and people who will walk further than the first overlook. Further out means further from help. Start thinking about how anyone would call for it."},
+	{name = "National Park", visitors = 500, stars = 3.4, research = 60,
+		story = "Congress signed it this morning: a National Park. The crowds will come for the far country now, the summit and the high lakes. A twisted ankle a mile from the road is a nuisance; ten miles out, after dark, it can kill. We can finally fund a search and rescue team and huts in the backcountry. We will need them."},
+	{name = "Crown Jewel", visitors = 1600, stars = 3.8, research = 180,
+		story = "They are calling it the crown jewel of the system. That buys us a helicopter, which reaches anywhere in the park in minutes. It also means that anything that goes wrong here now makes the national news."},
+]
+
 
 const TERRAIN_NAMES := ["Deep water", "Water", "Shore", "Grassland", "Wildflower meadow", "Forest", "Rocky foothills", "Mountain peak"]
 
@@ -24,12 +38,12 @@ const BUILD := {
 	B.ROAD: {name = "Road", cost = 30, upkeep = 0.5, size = Vector2i(1, 1), dist = 3, str = 0.45,
 		desc = "Cars drive on roads. Connect the highway to parking lots. Noisy: wildlife keeps away and scenery suffers. Drag to build."},
 	B.TRAIL: {name = "Trail", cost = 12, upkeep = 0.15, size = Vector2i(1, 1), dist = 1, str = 0.12,
-		desc = "Footpath for visitors. Low impact. Becomes a boardwalk over shallow water and switchbacks on mountains. Drag to build."},
+		desc = "A graded footpath: the everyday trail. Comfortable on gentle ground, risky on steep ground. Becomes a boardwalk over shallow water. Drag to build."},
 	B.PARKING: {name = "Parking Lot", cost = 60, upkeep = 0.6, size = Vector2i(1, 1), dist = 4, str = 0.6,
 		desc = "Each tile holds 2 cars. Visitors can only come if there is somewhere to park. Drag an area next to a road."},
 	B.GATE: {name = "Entrance Gate", cost = 800, upkeep = 10, size = Vector2i(1, 1), dist = 2, str = 0.3,
 		desc = "Place on a road. Opens the park and collects the entry fee from every car."},
-	B.VISITOR_CENTER: {name = "Visitor Center", cost = 4500, upkeep = 45, size = Vector2i(2, 2), dist = 3, str = 0.5, cap = 40,
+	B.VISITOR_CENTER: {level = 2, name = "Visitor Center", cost = 4500, upkeep = 45, size = Vector2i(2, 2), dist = 3, str = 0.5, cap = 40,
 		desc = "Exhibits, maps and a gift shop. Loved by sightseers and families. Earns gift-shop income."},
 	B.RESTROOM: {name = "Restroom", cost = 700, upkeep = 12, size = Vector2i(1, 1), dist = 2, str = 0.3, cap = 12,
 		desc = "Visitors on longer outings get grumpy without one nearby."},
@@ -39,29 +53,37 @@ const BUILD := {
 		desc = "A viewing platform. Its appeal depends on the scenery around it: water, peaks, forest and landmarks help; roads, parking and litter hurt."},
 	B.PICNIC: {name = "Picnic Area", cost = 350, upkeep = 4, size = Vector2i(1, 1), dist = 2, str = 0.25, cap = 16,
 		desc = "Tables in the shade. Families love them. Put a bin nearby!"},
-	B.CAMP: {name = "Campground", cost = 2500, upkeep = 20, size = Vector2i(2, 2), dist = 4, str = 0.5, cap = 16,
+	B.CAMP: {level = 2, name = "Campground", cost = 2500, upkeep = 20, size = Vector2i(2, 2), dist = 4, str = 0.5, cap = 16,
 		desc = "Campers pay a nightly fee. Best somewhere pretty and away from roads."},
-	B.SNACK: {name = "Snack Shack", cost = 1800, upkeep = 25, size = Vector2i(1, 1), dist = 2, str = 0.35, cap = 12,
+	B.SNACK: {level = 2, name = "Snack Shack", cost = 1800, upkeep = 25, size = Vector2i(1, 1), dist = 2, str = 0.35, cap = 12,
 		desc = "Sells food and drinks. Good income, but creates a lot of litter."},
 	B.RANGER: {name = "Ranger Station", cost = 3000, upkeep = 30, size = Vector2i(2, 2), dist = 3, str = 0.4,
 		desc = "Base for up to 3 rangers and 3 maintenance workers. Required to hire them."},
 	B.RESEARCH: {name = "Research Station", cost = 4000, upkeep = 35, size = Vector2i(2, 2), dist = 2, str = 0.3,
 		desc = "Base for up to 3 ecologists, who remove invasive species and generate research."},
-	B.CRAG: {name = "Climbing Crag", cost = 500, upkeep = 6, size = Vector2i(1, 1), dist = 2, str = 0.35, cap = 8,
+	B.CRAG: {level = 3, name = "Climbing Crag", cost = 500, upkeep = 6, size = Vector2i(1, 1), dist = 2, str = 0.35, cap = 8,
 		desc = "Bolted climbing routes. Must be on rocky foothills. Attracts climbers, but injuries are more likely and mountain goats dislike it."},
 	B.SIGN: {name = "Safety Signage", cost = 120, upkeep = 1, size = Vector2i(1, 1), dist = 0, str = 0.0,
-		desc = "Maps and hazard warnings. Cuts injuries and lost hikers within 6 tiles."},
-	B.HIDE: {name = "Wildlife Hide", cost = 700, upkeep = 5, size = Vector2i(1, 1), dist = 0, str = 0.05, cap = 8,
+		desc = "Maps and hazard warnings. Without a sign nearby, steep trails hurt far more people and long trails lose them. Covers 6 tiles."},
+	B.HIDE: {level = 3, name = "Wildlife Hide", cost = 700, upkeep = 5, size = Vector2i(1, 1), dist = 0, str = 0.05, cap = 8,
 		desc = "A quiet blind for watching animals. Its appeal depends on how much healthy wildlife lives nearby."},
-	B.TRAILHEAD: {name = "Trailhead Kiosk", cost = 400, upkeep = 3, size = Vector2i(1, 1), dist = 1, str = 0.15,
+	B.CALLBOX: {name = "Call Box", cost = 250, upkeep = 2, size = Vector2i(1, 1), dist = 0, str = 0.0, level = 2,
+		desc = "A solar radio post. Anyone in trouble within 9 tiles gets word out at once, so they can hold on half as long again while help comes."},
+	B.HUT: {name = "Backcountry Hut", cost = 1500, upkeep = 8, size = Vector2i(1, 1), dist = 2, str = 0.25, level = 3,
+		desc = "A bunkhouse far from the road. Hikers caught out after dark within 10 tiles shelter here instead of spending the night in the open."},
+	B.SAR: {name = "Rescue Post", cost = 6000, upkeep = 60, size = Vector2i(2, 2), dist = 3, str = 0.4, level = 3,
+		desc = "A trained team with a truck and litters. Sent to serious emergencies up to 60 tiles away, much faster than a ranger on foot. One call-out at a time."},
+	B.HELIPAD: {name = "Rescue Helipad", cost = 15000, upkeep = 140, size = Vector2i(2, 2), dist = 6, str = 0.8, level = 4,
+		desc = "A helicopter reaches anywhere in the park in moments and saves lives nothing else can. Each flight costs $600, and the noise empties the sky of eagles."},
+	B.TRAILHEAD: {level = 2, name = "Trailhead Kiosk", cost = 400, upkeep = 3, size = Vector2i(1, 1), dist = 1, str = 0.15,
 		desc = "Trail maps and a register. Hikers leaving from here rarely get lost, and it doubles as safety signage."},
 }
 
 const CATEGORIES := [
-	{id = "paths", name = "Roads & Trails", tools = [B.ROAD, B.TRAIL, "switchback", B.PARKING, B.GATE]},
+	{id = "paths", name = "Roads & Trails", tools = [B.ROAD, "path", B.TRAIL, "steps", "switchback", B.PARKING, B.GATE]},
 	{id = "facilities", name = "Facilities", tools = [B.VISITOR_CENTER, B.RESTROOM, B.BIN, B.SNACK, B.SIGN, B.TRAILHEAD]},
 	{id = "attractions", name = "Attractions", tools = [B.OVERLOOK, B.PICNIC, B.CAMP, B.CRAG, B.HIDE]},
-	{id = "ops", name = "Operations", tools = [B.RANGER, B.RESEARCH]},
+	{id = "ops", name = "Operations", tools = [B.RANGER, B.RESEARCH, B.CALLBOX, B.HUT, B.SAR, B.HELIPAD]},
 	{id = "land", name = "Land", tools = ["bulldoze", "plant", "weed"]},
 	{id = "terrain", name = "Terrain", tools = ["raise", "lower", "level", "smooth"]},
 ]
@@ -69,11 +91,13 @@ const CATEGORIES := [
 const TOOLS := {
 	"bulldoze": {name = "Demolish", cost = 10, desc = "Remove roads, trails and buildings. Drag an area. $10 per tile."},
 	"plant": {name = "Plant Native Trees", cost = 25, desc = "Restore habitat by planting trees on open land. Drag an area. Requires Native Restoration research."},
-	"switchback": {name = "Switchback Trail", cost = 12, desc = "Drag from the bottom of a slope to the top: the trail finds its own zigzag route up at a gentle grade. Hikers crawl up steep trails and avoid them."},
-	"raise": {name = "Raise Land", cost = 15, desc = "Hold to push the ground up under the brush. [ and ] change the brush size. Earthworks disturb the soil and wildlife nearby."},
-	"lower": {name = "Lower Land", cost = 15, desc = "Hold to dig the ground down under the brush. [ and ] change the brush size."},
-	"level": {name = "Level Land", cost = 15, desc = "Hold and drag to flatten ground to the height where you started. Good for building pads and road beds."},
-	"smooth": {name = "Smooth Land", cost = 10, desc = "Hold to soften bumps and blend slopes into each other."},
+	"path": {name = "Rough Path", cost = 5, desc = "A beaten track, cheap and light on the land. Fine on the flat. On a slope it is slow, slippery and where most injuries happen."},
+	"steps": {name = "Built Trail", cost = 45, level = 2, desc = "Stone steps, drains and handrails. Safe and quick even on steep ground, and it upgrades any path it is laid over. Costly to build."},
+	"switchback": {name = "Switchback", level = 2, cost = 12, desc = "Drag from the bottom of a slope to the top: the trail finds its own zigzag route up at a gentle grade. Hikers crawl up steep trails and avoid them."},
+	"raise": {level = 2, name = "Raise Land", cost = 15, desc = "Hold to push the ground up under the brush. [ and ] change the brush size. Earthworks disturb the soil and wildlife nearby."},
+	"lower": {level = 2, name = "Lower Land", cost = 15, desc = "Hold to dig the ground down under the brush. [ and ] change the brush size."},
+	"level": {level = 2, name = "Level Land", cost = 15, desc = "Hold and drag to flatten ground to the height where you started. Good for building pads and road beds."},
+	"smooth": {level = 2, name = "Smooth Land", cost = 10, desc = "Hold to soften bumps and blend slopes into each other."},
 	"weed": {name = "Remove Invasives", cost = 40, desc = "Send a contract crew to clear invasive plants from tiles. Drag an area. Ecologists do this for free."},
 }
 
@@ -85,6 +109,8 @@ const EFFECTS := {
 	B.PICNIC: [1, -1, 0, 0, 0], B.CAMP: [1, -2, 0, 2, 0], B.SNACK: [1, -1, 0, 2, 0], B.RANGER: [0, -1, 2, 0, 0],
 	B.RESEARCH: [0, 1, 0, 0, 2], B.CRAG: [1, -1, -2, 0, 0], B.SIGN: [0, 0, 1, 0, 0], B.HIDE: [1, 0, 0, 0, 0],
 	B.TRAILHEAD: [1, 0, 1, 0, 0],
+	B.CALLBOX: [0, 0, 1, 0, 0], B.HUT: [1, -1, 2, 0, 0], B.SAR: [0, -1, 2, 0, 0], B.HELIPAD: [0, -2, 2, 0, 0],
+	"path": [1, 0, -1, 0, 0], "steps": [1, -1, 2, 0, 0],
 	"switchback": [1, -1, 1, 0, 0], "bulldoze": [0, 1, 0, 0, 0], "plant": [0, 2, 0, 0, 0], "weed": [0, 2, 0, 0, 0],
 	"raise": [0, -1, 0, 0, 0], "lower": [0, -1, 0, 0, 0], "level": [0, -1, 0, 0, 0], "smooth": [0, -1, 0, 0, 0],
 }

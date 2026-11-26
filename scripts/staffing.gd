@@ -10,7 +10,9 @@ const INCIDENT_TITLES := {
 	"lost": "Hikers are lost",
 	"fall": "A climber has fallen",
 	"bear": "Dangerous bear encounter",
+	"night": "Hikers are stranded after dark",
 }
+const SEVERITY_NAMES := ["", "minor", "serious", "life-threatening"]
 
 class Staff:
 	var role := ""
@@ -35,6 +37,13 @@ class Incident:
 	var timer := 0.0
 	var ranger = null
 	var treating := false
+	var severity := 2 # 1 minor, 2 serious, 3 life-threatening
+	var eta := -1.0 # seconds until a rescue team or helicopter arrives; -1 if none sent
+	var by := ""
+	var post := 0
+
+var tally := {} # how emergencies have gone, for the record
+var busy := {} # rescue post or helipad id -> seconds until its team is free again
 
 var g
 var w: World
@@ -140,14 +149,22 @@ func maybe_incident(gr, t: Vector2i) -> void:
 	if ter == D.T.ROCK: p *= 3.0
 	elif ter == D.T.PEAK: p *= 6.0
 	elif w.is_water(ter): p *= 2.0
-	if w.build[i] != D.B.TRAIL: p *= 0.3
+	if w.build[i] != D.B.TRAIL:
+		p *= 0.3
+	else:
+		# the steeper the ground, the more the quality of the trail matters
+		var grade: int = w.trail_grade[i]
+		var steep := w.slope_at(t)
+		p *= [1.5, 1.0, 0.6][grade] * (1.0 + steep * [6.0, 2.5, 0.4][grade])
+		if steep > 0.6 and w.sign_cover[i] == 0:
+			p *= 1.8 # nobody warned them
 	if g.has_tech("trails"): p *= 0.6
 	p *= float(D.WEATHER[g.weather_at(t)].risk)
 	var kind := "injury"
 	if gr.walked > 22 and rng.randf() < 0.45:
 		kind = "lost"
-		p = 0.0007
-	if w.sign_cover[i] == 1: p *= 0.4
+		p = 0.0011 if not gr.registered else 0.0004
+	if w.sign_cover[i] == 1: p *= 0.3
 	if rng.randf() >= p:
 		return
 	if ranger_near(t, 7.0):
@@ -187,12 +204,64 @@ func create(kind: String, gr, t: Vector2i) -> void:
 	inc.title = INCIDENT_TITLES[kind]
 	inc.tile = t
 	inc.group = gr
-	inc.timer = 48.0 if g.has_tech("sar") else 30.0
+	# how bad is it?
+	var crit := {"injury": 0.04, "lost": 0.03, "fall": 0.2, "bear": 0.07, "night": 0.08}[kind] as float
+	var i := World.ti(t)
+	if kind == "injury":
+		crit += minf(0.3, w.slope_at(t) * 0.25)
+	if kind == "night" or kind == "lost":
+		if g.season() == 3 or w.biome[i] == D.BIOME.ALPINE: crit += 0.15
+		var wx: String = g.weather_at(t)
+		if wx == "snow" or wx == "storm": crit += 0.1
+	var roll := rng.randf()
+	inc.severity = 3 if roll < crit else (2 if roll < crit + 0.5 else 1)
+	inc.timer = [0.0, 30.0, 40.0, 34.0][inc.severity]
+	if g.has_tech("sar"): inc.timer *= 1.5
+	if w.call_cover[i] == 1: inc.timer *= 1.5
+	tally[kind] = tally.get(kind, 0) + 1
+	tally["sev%d" % inc.severity] = tally.get("sev%d" % inc.severity, 0) + 1
 	incidents.append(inc)
 	gr.state = Visitors.S.WAIT_HELP
 	gr.cur = t
 	gr.pts = PackedVector2Array()
-	g.say("%s! %s" % [inc.title, "A ranger is needed." if count("ranger") > 0 else "You have no rangers to help."], "warn", t)
+	var help := _dispatch(inc)
+	if help == "":
+		help = "A ranger is needed." if count("ranger") > 0 else "You have no rangers to help."
+	g.say("%s (%s)! They can hold on about %d seconds. %s" % [inc.title, SEVERITY_NAMES[inc.severity], int(inc.timer), help], "warn" if inc.severity < 3 else "bad", t)
+
+
+## Sends the best rescue the park owns. Minor trouble is left to the rangers;
+## serious cases get the rescue team if one is in range; the helicopter flies
+## for anything life-threatening, or serious and too far for anyone else.
+func _dispatch(inc: Incident) -> String:
+	if inc.severity < 2:
+		return ""
+	var best_id := 0
+	var best_eta := 1e9
+	var best_by := ""
+	for s in w.structures.values():
+		if busy.get(s.id, 0.0) > 0.0:
+			continue
+		var d := Vector2(Vector2i(s.tile) - inc.tile).length()
+		var eta := 1e9
+		if s.kind == D.B.SAR and d <= 60.0:
+			eta = 4.0 + d * 0.38
+		elif s.kind == D.B.HELIPAD and g.money >= 600.0 and (inc.severity == 3 or d > 45.0):
+			eta = 7.0 + d * 0.04
+		if eta < best_eta:
+			best_eta = eta
+			best_id = s.id
+			best_by = "team" if s.kind == D.B.SAR else "heli"
+	if best_id == 0:
+		return ""
+	inc.eta = best_eta
+	inc.by = best_by
+	inc.post = best_id
+	busy[best_id] = best_eta * 2.0 + 6.0
+	if best_by == "heli":
+		g.add_money(-600.0, "Rescue flights")
+		return "The helicopter is on its way: about %d seconds ($600)." % int(best_eta)
+	return "The rescue team is on its way: about %d seconds." % int(best_eta)
 
 
 func _close(inc: Incident, serious: bool) -> void:
@@ -200,6 +269,23 @@ func _close(inc: Incident, serious: bool) -> void:
 	if inc.ranger != null:
 		inc.ranger.incident = null
 	var gr = inc.group
+	if serious and inc.severity >= 3:
+		g.deaths += 1
+		g.safety = maxf(0.0, g.safety - 22.0)
+		g.serious_incidents += 1
+		g.last_serious_day = g.day
+		g.add_money(-6000.0, "Fines & liability")
+		for k in 6:
+			g.record_rating(0.0)
+		g.comment("Someone died out there and no one could reach them")
+		var lesson := "Rangers on foot were too far away."
+		if w.count_kind(D.B.SAR) == 0 and w.count_kind(D.B.HELIPAD) == 0:
+			lesson = "The park has no rescue team that could reach them in time."
+		elif inc.eta > 0.0:
+			lesson = "Help was on its way but too far off. A call box, hut or rescue post nearer the far trails would have bought the time."
+		g.say("A visitor has died. %s %s (-$6,000, and the news travels.)" % [inc.title, lesson], "bad", inc.tile)
+		g.visitors.remove_group(gr)
+		return
 	if serious:
 		g.safety = maxf(0.0, g.safety - 14.0)
 		g.serious_incidents += 1
@@ -219,15 +305,29 @@ func update(dt: float) -> void:
 	var k := incidents.size() - 1
 	while k >= 0:
 		var inc := incidents[k]
+		if inc.eta >= 0.0:
+			inc.eta -= dt
+			if inc.eta <= 0.0:
+				inc.group.sat -= 4.0
+				inc.group.last_thought = "The rescue team got us out"
+				g.comment("The rescue team was there when it mattered")
+				g.say("%s: %s. Everyone is safe." % ["The helicopter lifted them out" if inc.by == "heli" else "The rescue team reached them", inc.title.to_lower()], "good", inc.tile)
+				_close(inc, false)
+				k -= 1
+				continue
 		if not inc.treating:
 			inc.timer -= dt
 			if inc.timer <= 0.0:
-				if rng.randf() < 0.35:
+				if inc.severity == 1 or (inc.severity == 2 and rng.randf() < 0.35):
 					inc.group.sat -= 20.0
 					_close(inc, false)
 				else:
 					_close(inc, true)
 		k -= 1
+	for id in busy.keys():
+		busy[id] -= dt
+		if busy[id] <= 0.0:
+			busy.erase(id)
 	for s in staff:
 		_update_staff(s, dt)
 
