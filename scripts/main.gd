@@ -1171,6 +1171,8 @@ func _dev_hooks(args: Dictionary) -> void:
 	zoom_goal = dist
 	if args.has("cat"):
 		hud._show_category(int(args.cat))
+		if args.has("pick"):
+			hud.select_tool(D.CATEGORIES[int(args.cat)].tools[int(args.pick)])
 	if args.has("panel"):
 		hud.toggle_panel(args.panel)
 	if args.has("overlay"):

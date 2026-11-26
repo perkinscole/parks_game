@@ -77,6 +77,18 @@ const TOOLS := {
 	"weed": {name = "Remove Invasives", cost = 40, desc = "Send a contract crew to clear invasive plants from tiles. Drag an area. Ecologists do this for free."},
 }
 
+# What each purchase pushes on, from -2 (hurts a lot) to +2 (helps a lot):
+# [visitors, nature, safety, income, knowledge]. Shown on the build card.
+const EFFECTS := {
+	B.ROAD: [1, -2, 0, 0, 0], B.TRAIL: [1, -1, 0, 0, 0], B.PARKING: [2, -2, 0, 0, 0], B.GATE: [0, -1, 0, 2, 0],
+	B.VISITOR_CENTER: [2, -1, 0, 1, 0], B.RESTROOM: [1, -1, 0, 0, 0], B.BIN: [1, 1, 0, 0, 0], B.OVERLOOK: [2, -1, 0, 0, 0],
+	B.PICNIC: [1, -1, 0, 0, 0], B.CAMP: [1, -2, 0, 2, 0], B.SNACK: [1, -1, 0, 2, 0], B.RANGER: [0, -1, 2, 0, 0],
+	B.RESEARCH: [0, 1, 0, 0, 2], B.CRAG: [1, -1, -2, 0, 0], B.SIGN: [0, 0, 1, 0, 0], B.HIDE: [1, 0, 0, 0, 0],
+	B.TRAILHEAD: [1, 0, 1, 0, 0],
+	"switchback": [1, -1, 1, 0, 0], "bulldoze": [0, 1, 0, 0, 0], "plant": [0, 2, 0, 0, 0], "weed": [0, 2, 0, 0, 0],
+	"raise": [0, -1, 0, 0, 0], "lower": [0, -1, 0, 0, 0], "level": [0, -1, 0, 0, 0], "smooth": [0, -1, 0, 0, 0],
+}
+
 const ATTRACTIONS := [B.OVERLOOK, B.VISITOR_CENTER, B.PICNIC, B.CAMP, B.SNACK, B.CRAG, B.HIDE]
 
 # range: max one-way walk in tiles. hike: how much they value long, scenic walks.

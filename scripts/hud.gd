@@ -119,6 +119,18 @@ var current_tool = null
 var view_tile := Vector2i.ZERO
 var quality_box: OptionButton
 var tray_title: Label
+var tray: PanelContainer
+var tool_wrap: VBoxContainer
+var card: PanelContainer
+var card_title: Label
+var card_cost: Label
+var card_desc: Label
+var card_chips: HBoxContainer
+var card_after: Label
+var _hover_tool = null
+var _card_tool = "none"
+var _last_money := -1.0
+var _toast_side := 0.0
 var panel_id := ""
 var stat := {}
 var speed_buttons: Array[Button] = []
@@ -415,7 +427,9 @@ func _build_toolbar() -> void:
 	hint_label.add_theme_constant_override("outline_size", 6)
 	hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	wrap.add_child(hint_label)
-	var tray := PanelContainer.new()
+	tool_wrap = wrap
+	_build_card(wrap)
+	tray = PanelContainer.new()
 	tray.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	tray.add_theme_stylebox_override("panel", _sb(Color(PANEL, 0.94), 10, Color(ACCENT, 0.45), 1, 8.0))
 	wrap.add_child(tray)
@@ -496,6 +510,108 @@ func _build_toolbar() -> void:
 	stat["net"] = net
 
 
+## The card above the build tray: what the thing costs to buy and to keep, and
+## which of the park's goals it helps or hurts.
+func _build_card(parent: Control) -> void:
+	card = PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	card.custom_minimum_size.x = 560
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_theme_stylebox_override("panel", _sb(Color(PANEL, 0.96), 10, Color(ACCENT, 0.6), 1, 10.0))
+	card.visible = false
+	parent.add_child(card)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 5)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(v)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", 12)
+	v.add_child(top)
+	card_title = _label("", 16, Color.WHITE)
+	card_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(card_title)
+	card_cost = _label("", 14, Color("f2c879"))
+	top.add_child(card_cost)
+	card_desc = _para("", 13, Color("c5cfd5"))
+	card_desc.custom_minimum_size.x = 540
+	v.add_child(card_desc)
+	card_chips = HBoxContainer.new()
+	card_chips.add_theme_constant_override("separation", 6)
+	v.add_child(card_chips)
+	card_after = _label("", 12, Color("a3afb6"))
+	v.add_child(card_after)
+
+
+func _effect_chip(name: String, v: int) -> Control:
+	var p := PanelContainer.new()
+	var good := v > 0
+	var col := Color("5fd08a") if good else Color("ff8a70")
+	p.add_theme_stylebox_override("panel", _sb(Color(col, 0.16), 8, Color(col, 0.7), 1, 5.0))
+	var arrows := ("+" if good else "-").repeat(absi(v))
+	var l := _label("%s %s" % [name, arrows], 12, col)
+	p.add_child(l)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return p
+
+
+func _update_card() -> void:
+	var tool = _hover_tool if _hover_tool != null else current_tool
+	if tool == null:
+		card.visible = false
+		_card_tool = "none"
+		return
+	card.visible = true
+	var def: Dictionary = D.BUILD[tool] if tool is int else D.TOOLS[tool]
+	var per_tile: bool = tool is String or tool == D.B.ROAD or tool == D.B.TRAIL or tool == D.B.PARKING
+	var cost: float = def.cost
+	# the money line changes as funds do, so it is refreshed every time
+	if per_tile:
+		card_after.text = "You have %s: enough for about %d tiles. The total shows by the pointer as you drag." % [D.money(game.money), int(game.money / maxf(cost, 1.0))]
+	elif cost > game.money:
+		card_after.text = "You have %s. You need %s more." % [D.money(game.money), D.money(cost - game.money)]
+	else:
+		card_after.text = "You have %s. After buying: %s." % [D.money(game.money), D.money(game.money - cost)]
+	card_after.add_theme_color_override("font_color", Color("ff8a70") if cost > game.money else Color("a3afb6"))
+	if _same_tool(tool, _card_tool):
+		return
+	_card_tool = tool
+	card_title.text = def.name
+	var price := "%s%s" % [D.money(cost), " per tile" if per_tile else ""]
+	if tool is int and def.upkeep > 0.0:
+		price += "   +  %s/day upkeep%s" % [D.money(def.upkeep) if def.upkeep >= 1.0 else "$%.2f" % def.upkeep, " per tile" if per_tile else ""]
+	card_cost.text = price
+	card_desc.text = def.desc
+	for c in card_chips.get_children():
+		card_chips.remove_child(c)
+		c.queue_free()
+	var fx: Array = D.EFFECTS.get(tool, [0, 0, 0, 0, 0])
+	var names := ["Visitors", "Nature", "Safety", "Income", "Knowledge"]
+	var any := false
+	for k in 5:
+		if fx[k] != 0:
+			card_chips.add_child(_effect_chip(names[k], fx[k]))
+			any = true
+	if tool is int and def.dist > 0:
+		card_chips.add_child(_label("Wildlife avoids it within %d tile%s" % [def.dist, "" if def.dist == 1 else "s"], 12, Color("a3afb6")))
+	card_chips.visible = any or (tool is int and def.dist > 0)
+	card.size = Vector2(560, 0)
+
+
+## Money going out or coming in drifts up from the funds figure.
+func _money_pop(delta_money: float) -> void:
+	var l := _label(("+" if delta_money > 0 else "-") + D.money(absf(delta_money)), 16, MONEY if delta_money > 0 else Color("ff8a70"))
+	l.add_theme_color_override("font_outline_color", Color(0.04, 0.08, 0.1, 0.9))
+	l.add_theme_constant_override("outline_size", 5)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(l)
+	var from: Vector2 = stat.money.global_position + Vector2(stat.money.size.x - 70.0, -22.0)
+	l.position = from
+	var tw := create_tween()
+	tw.tween_property(l, "position", from + Vector2(0, -46), 1.3)
+	tw.parallel().tween_property(l, "modulate:a", 0.0, 1.3).set_delay(0.5)
+	tw.tween_callback(l.queue_free)
+
+
 func _show_category(i: int) -> void:
 	cat_index = i
 	tray_title.text = D.CATEGORIES[i].name
@@ -508,10 +624,11 @@ func _show_category(i: int) -> void:
 		b.tool = tool
 		b.toggle_mode = true
 		b.focus_mode = Control.FOCUS_NONE
-		b.custom_minimum_size = Vector2(98, 86)
+		# a full tray uses narrower buttons so it stays clear of the messages
+		b.custom_minimum_size = Vector2(98 if D.CATEGORIES[i].tools.size() <= 5 else 86, 86)
 		var def: Dictionary = D.BUILD[tool] if tool is int else D.TOOLS[tool]
 		b.cost_text = D.money(def.cost)
-		b.label_text = def.name if str(def.name).length() <= 15 else str(def.name).substr(0, 14) + "."
+		b.label_text = def.name if str(def.name).length() <= 14 else str(def.name).substr(0, 13) + "."
 		var unit := ""
 		if tool is String or tool == D.B.ROAD or tool == D.B.TRAIL or tool == D.B.PARKING:
 			unit = " per tile"
@@ -521,6 +638,8 @@ func _show_category(i: int) -> void:
 		b.locked = tool is String and tool == "plant" and not game.has_tech("restore")
 		b.button_pressed = _same_tool(tool, current_tool)
 		b.pressed.connect(func(): select_tool(null if _same_tool(tool, current_tool) else tool))
+		b.mouse_entered.connect(func(): _hover_tool = tool)
+		b.mouse_exited.connect(func(): if _same_tool(_hover_tool, tool): _hover_tool = null)
 		tool_row.add_child(b)
 
 
@@ -1176,6 +1295,17 @@ func _process(delta: float) -> void:
 	if _refresh <= 0.0:
 		_refresh = 0.2
 		_update_stats()
+		_update_card()
+		if _last_money >= 0.0 and absf(game.money - _last_money) >= 10.0:
+			_money_pop(game.money - _last_money)
+		_last_money = game.money
+		# messages sit beside the build tray when there is room, above it when not
+		var crowded: bool = tray.global_position.x < toasts.global_position.x + toasts.size.x + 8.0 \
+			or (card.visible and card.global_position.x < toasts.global_position.x + toasts.size.x + 8.0)
+		var lift := -64.0 if not crowded else -(root.size.y - tool_wrap.global_position.y) - 8.0
+		if absf(lift - _toast_side) > 1.0:
+			_toast_side = lift
+			toasts.offset_bottom = lift
 	_panel_refresh -= delta
 	if _panel_refresh <= 0.0 and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_panel_refresh = 1.0
