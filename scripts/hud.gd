@@ -127,6 +127,8 @@ var card_cost: Label
 var card_desc: Label
 var card_chips: HBoxContainer
 var card_after: Label
+var issues_box: PanelContainer
+var issues_list: VBoxContainer
 var _hover_tool = null
 var _card_tool = "none"
 var _last_money := -1.0
@@ -177,6 +179,7 @@ func setup(g: Game, f: Font) -> void:
 	_build_side()
 	_build_misc()
 	_build_guide()
+	_build_issues()
 	game.toast.connect(_on_toast)
 	_show_category(0)
 	_update_stats()
@@ -1048,6 +1051,11 @@ func _place_inspector() -> void:
 
 
 func _on_toast(text: String, kind: String, tile: Vector2i) -> void:
+	# keep the stack short so it never climbs over the side buttons
+	while toasts.get_child_count() >= 3:
+		var oldest := toasts.get_child(0)
+		toasts.remove_child(oldest)
+		oldest.queue_free()
 	var p := PanelContainer.new()
 	var col: Color = KIND_COLORS.get(kind, KIND_COLORS.info)
 	var sb := _sb(Color(CREAM, 0.9), 5, col, 0, 7.0)
@@ -1147,6 +1155,131 @@ func _update_objectives() -> void:
 			first_open = false
 		obj_box.add_child(h)
 	objectives.reset_size()
+
+
+# ------------------------------------------------------------------- issues
+
+func _tile_of(i: int) -> Vector2i:
+	return Vector2i(i % World.W, i / World.W)
+
+
+## Everything currently going wrong, worst first:
+## [severity 2 = urgent / 1 = worth fixing, what, why it matters and what to do, where or null]
+func _issues() -> Array:
+	var g := game
+	var w := g.world
+	var out: Array = []
+	var gates := w.count_kind(D.B.GATE)
+	if gates == 0:
+		out.append([1, "The park is closed", "Nobody can visit until an Entrance Gate stands on a road. Build one from Roads & Trails.", w.entry])
+	elif w.lot_tiles.is_empty():
+		out.append([2, "Nowhere to park", "Visitors only come if they can park. Drag a Parking Lot beside the road.", w.entry])
+	elif not g._lot_reachable():
+		out.append([2, "Cars cannot reach the parking", "The road from the highway does not connect to a lot. Join them up with Road.", w.lot_tiles[0]])
+	if not w.fire_tiles.is_empty():
+		out.append([2, "Wildfire: %d tiles burning" % w.fire_tiles.size(), "Fire spreads fastest in drought and wind, and visitors nearby are in danger. Rangers fight it; a break in the trees slows it.", _tile_of(w.fire_tiles.keys()[0])])
+	if g.money < 0:
+		out.append([2, "The park is in debt", "You cannot build while funds are below zero. Raise the entry fee in Finances, accept a grant, or demolish things with high upkeep.", null])
+	else:
+		var net := 0.0
+		for k in g.ledger_prev:
+			net += g.ledger_prev[k]
+		if net < -1.0 and g.day > 1:
+			out.append([1, "Losing %s a day" % D.money(-net), "Yesterday's upkeep and wages were more than the income. Open Finances to see where it goes; more visitors, a fairer fee or a grant will close the gap.", null])
+	if g.turned_away_today > 0:
+		out.append([1, "%d cars turned away today" % g.turned_away_today, "The parking was full, so those families left without paying. Add parking spaces, but keep them away from streams and wildlife.", w.lot_tiles[0] if not w.lot_tiles.is_empty() else null])
+	var orphan = null
+	var attractions := 0
+	for s in w.structures.values():
+		if s.kind in D.ATTRACTIONS:
+			attractions += 1
+			if s.access.is_empty() and orphan == null:
+				orphan = s
+	if orphan != null:
+		out.append([1, "%s has no path to it" % orphan.name, "Visitors cannot reach it, so it earns nothing. Connect it to a parking lot with a Trail.", orphan.tile])
+	if g.open and attractions == 0:
+		out.append([1, "Nothing for visitors to do", "People need a reason to come. Build a Scenic Overlook, Picnic Area or Visitor Center on a trail.", null])
+	if g.safety < 70.0:
+		out.append([2 if g.safety < 45.0 else 1, "Safety is at %d%%" % int(g.safety), "Hikers are getting hurt or lost. Hire rangers, put Safety Signage and Trailhead Kiosks on long or steep trails, and avoid steep straight climbs.", null])
+	if g.open and g.visitors.people_count() > 0 and g.staffing.count("ranger") == 0:
+		out.append([1, "No rangers on duty", "Nobody will find a lost hiker or treat an injury. Build a Ranger Station and hire a ranger in the Staff panel.", null])
+	if w.litter_tiles.size() > 10:
+		out.append([1, "Litter on %d tiles" % w.litter_tiles.size(), "Litter spoils the scenery and food scraps draw bears toward people. Add Trash bins where people stop and hire maintenance workers.", _tile_of(w.litter_tiles.keys()[0])])
+	var know := g.eco.understanding()
+	if know < 0.08:
+		if g.day > 2:
+			out.append([1, "You are managing blind", "With no research, wildlife numbers, invasive plants and the park's health are all unknown. Build a Research Station and hire an ecologist.", null])
+	else:
+		var seen := -1
+		for i: int in w.invasive_tiles.keys():
+			if w.inv_seen[i] == 1:
+				seen = i
+				break
+		if seen >= 0:
+			out.append([1, "Invasive plants: %d known patch%s" % [g.eco.seen_invasive_count(), "" if g.eco.seen_invasive_count() == 1 else "es"], "They crowd out native plants and spread along trails and roads on boots and tyres. Use Remove Invasives (Land) or let ecologists clear them.", _tile_of(seen)])
+		if g.eco.health < 60.0:
+			out.append([2 if g.eco.health < 40.0 else 1, "Ecosystem under stress (%s)" % _eco_text(), "Too much disturbance, too little habitat or a broken food web. Check the Wildlife panel and the Disturbance view; fewer roads and more quiet land help it recover.", null])
+	if g.stars < 2.5 and g.total_visitors > 20:
+		var why := "Read what visitors say in the Park panel."
+		var keys := g.comments.keys()
+		if not keys.is_empty():
+			keys.sort_custom(func(a, b): return g.comments[a] > g.comments[b])
+			why = "The most common comment: \"%s\"." % keys[0]
+		out.append([1, "Visitors are unhappy (%.1f stars)" % g.stars, why + " Low ratings mean fewer people come.", null])
+	out.sort_custom(func(a, b): return a[0] > b[0])
+	return out
+
+
+func _build_issues() -> void:
+	issues_box = PanelContainer.new()
+	issues_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	issues_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	issues_box.offset_top = 52
+	issues_box.offset_right = -8
+	issues_box.custom_minimum_size.x = 300
+	issues_box.add_theme_stylebox_override("panel", _sb(Color(PANEL, 0.94), 10, Color("ffb454", 0.6), 1, 8.0))
+	issues_box.visible = false
+	root.add_child(issues_box)
+	issues_list = VBoxContainer.new()
+	issues_list.add_theme_constant_override("separation", 4)
+	issues_box.add_child(issues_list)
+
+
+func _update_issues() -> void:
+	var list := _issues()
+	# while the first-day guide is running, its own steps cover the basics
+	if guide.visible and dim.visible:
+		list = []
+	issues_box.visible = not list.is_empty()
+	for c in issues_list.get_children():
+		issues_list.remove_child(c)
+		c.queue_free()
+	if list.is_empty():
+		return
+	issues_list.add_child(_label("Needs attention (%d)" % list.size(), 13, Color("ffb454")))
+	for k in mini(4, list.size()):
+		var it: Array = list[k]
+		var col := Color("ff6b5e") if it[0] >= 2 else Color("ffb454")
+		var b := Button.new()
+		b.focus_mode = Control.FOCUS_NONE
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.text = ("!! " if it[0] >= 2 else "!  ") + str(it[1]) + ("   (go)" if it[3] != null else "")
+		b.add_theme_color_override("font_color", col)
+		b.add_theme_font_size_override("font_size", 13)
+		b.tooltip_text = str(it[2]) + ("\nClick to go there." if it[3] != null else "")
+		b.add_theme_stylebox_override("normal", _sb(Color(col, 0.1), 6, Color(col, 0.35), 1, 5.0))
+		b.add_theme_stylebox_override("hover", _sb(Color(col, 0.22), 6, col, 1, 5.0))
+		var where = it[3]
+		var what: String = it[1]
+		var advice: String = it[2]
+		b.pressed.connect(func():
+			if where != null:
+				jump_to.emit(where)
+			game.say("%s. %s" % [what, advice], "warn"))
+		issues_list.add_child(b)
+	if list.size() > 4:
+		issues_list.add_child(_label("+ %d more" % (list.size() - 4), 12, Color("a3afb6")))
+	issues_box.size = Vector2(300, 0)
 
 
 # ------------------------------------------------------------ story and guide
@@ -1310,5 +1443,6 @@ func _process(delta: float) -> void:
 	if _panel_refresh <= 0.0 and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
 		_panel_refresh = 1.0
 		_update_objectives()
+		_update_issues()
 		if side.visible:
 			_fill_panel()
