@@ -494,7 +494,7 @@ func _recover_burns() -> void:
 		w.burned[i] -= 1
 		if w.burned[i] == 0:
 			if w.build[i] == D.B.NONE and rng.randf() < 0.6:
-				w.trees[i] = 2 if w.elev[i] > 0.45 else 1
+				w.trees[i] = 2 if w.height[i] > 6.0 else 3
 			w.fields_dirty = true
 			w.changed.emit(Rect2i(i % World.W, i / World.W, 1, 1))
 

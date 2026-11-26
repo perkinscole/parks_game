@@ -140,13 +140,11 @@ func generate(w: int, h: int, seed_val: int) -> void:
 				mesa[i] = 1
 				height[i] += 4.6 + floorf(mesan.get_noise_2d(x * 0.3, y * 0.3 + 90.0) * 2.5) * 0.9
 
-	# keep all land above the surrounding sea level
-	var lowest := 1e9
+	# keep all land above the surrounding sea level by flattening only the
+	# deepest basins (shifting the whole map up would push every altitude zone)
 	for i in n:
-		lowest = minf(lowest, height[i])
-	if lowest < 0.8:
-		for i in n:
-			height[i] += 0.8 - lowest
+		if height[i] < 2.0:
+			height[i] = maxf(2.0 - (2.0 - height[i]) * 0.14, 0.6)
 
 	# 4: fill depressions and build the drainage tree
 	var fill := height.duplicate()

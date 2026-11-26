@@ -11,7 +11,8 @@ const DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), 
 
 var terrain := PackedByteArray()
 var elev := PackedFloat32Array()
-var trees := PackedByteArray() # 0 none, 1 broadleaf, 2 conifer
+var trees := PackedByteArray() # 0 none, 1 aspen / broadleaf, 2 spruce, 3 pine
+var tree_density := PackedFloat32Array() # 0..1, how thickly trees grow on each tile
 var build := PackedByteArray()
 var sid := PackedInt32Array() # structure id per tile
 var litter := PackedByteArray()
@@ -198,28 +199,7 @@ func generate(seed_val: int) -> void:
 
 	_place_entry()
 
-	for y in H:
-		for x in W:
-			var i := idx(x, y)
-			var h := D.hash2(x, y, 1)
-			var conifer := elev[i] > 0.45 or D.hash2(x, y, 2) < 0.6
-			var bio := biome[i]
-			match terrain[i]:
-				D.T.FOREST: trees[i] = 2 if conifer else 1
-				D.T.GRASS:
-					if bio == D.BIOME.DESERT:
-						if h < 0.03: trees[i] = 1 # the odd juniper
-					elif bio == D.BIOME.VALLEY:
-						# aspen groves in the open valley
-						if n2.get_noise_2d(x * 3.0 + 90.0, y * 3.0) > 0.28 and h < 0.7: trees[i] = 1
-						elif h < 0.04: trees[i] = 2
-					elif bio == D.BIOME.WETLAND:
-						if h < 0.06: trees[i] = 1
-					elif h < 0.1: trees[i] = 2 if conifer else 1
-				D.T.MEADOW:
-					if h < (0.07 if bio == D.BIOME.ALPINE else 0.03): trees[i] = 2 if bio == D.BIOME.ALPINE else 1
-				D.T.ROCK:
-					if h < 0.1 and bio != D.BIOME.DESERT: trees[i] = 2
+	_scatter_vegetation(seed_val, moist)
 	for t in [entry, entry + Vector2i(0, -1), entry + Vector2i(0, -2)]:
 		trees[ti(t)] = 0
 		build[ti(t)] = D.B.ROAD
@@ -231,6 +211,71 @@ func generate(seed_val: int) -> void:
 	pristine_total = 0.0
 	for i in n:
 		pristine_total += _nature(i, true)
+
+
+## Decides where trees grow, how thickly and which kind, from the things that
+## decide it on a real mountainside: moisture, altitude, steepness, which way
+## the slope faces, and how close a stream is.
+func _scatter_vegetation(seed_val: int, moist: PackedFloat32Array) -> void:
+	tree_density.resize(W * H)
+	tree_density.fill(0.0)
+	var clump := FastNoiseLite.new()
+	clump.seed = seed_val + 311
+	clump.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	clump.frequency = 0.08
+	clump.fractal_octaves = 2
+	var grove := FastNoiseLite.new()
+	grove.seed = seed_val + 312
+	grove.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	grove.frequency = 0.045
+	for y in H:
+		for x in W:
+			var i := idx(x, y)
+			var t := terrain[i]
+			trees[i] = 0
+			if is_water(t) or t == D.T.PEAK or t == D.T.SAND:
+				continue
+			var bio := biome[i]
+			var hgt := height[i]
+			var gx := height[idx(mini(x + 1, W - 1), y)] - height[idx(maxi(x - 1, 0), y)]
+			var gy := height[idx(x, mini(y + 1, H - 1))] - height[idx(x, maxi(y - 1, 0))]
+			var slope := sqrt(gx * gx + gy * gy) * 0.5
+			# ground that rises toward the south faces north: shadier, cooler, wetter
+			var north := clampf(gy / (absf(gx) + absf(gy) + 0.2), -1.0, 1.0)
+			var streamside := _near_terrain(x, y, 2, [D.T.WATER, D.T.DEEP])
+			var d := moist[i] + 0.22 * north * minf(1.0, slope * 1.2) + clump.get_noise_2d(x, y) * 0.3
+			if streamside:
+				d += 0.2
+			d -= 0.55 * smoothstep(8.5, 13.0, hgt) # the treeline
+			d -= 0.6 * smoothstep(1.3, 2.4, slope) # too steep to hold soil
+			if bio == D.BIOME.DESERT:
+				d = d * 0.3 - 0.08
+			elif bio == D.BIOME.WETLAND:
+				d -= 0.25
+			var dens := clampf((d - 0.36) * 2.6, 0.0, 1.0)
+			if t == D.T.ROCK:
+				dens *= 0.3
+			tree_density[i] = dens
+			# the ground cover follows the trees
+			if (t == D.T.GRASS or t == D.T.MEADOW or t == D.T.FOREST) and bio != D.BIOME.DESERT and bio != D.BIOME.WETLAND:
+				if dens > 0.5:
+					terrain[i] = D.T.FOREST
+				elif moist[i] < 0.36 or bio == D.BIOME.ALPINE:
+					terrain[i] = D.T.MEADOW
+				else:
+					terrain[i] = D.T.GRASS
+			if D.hash2(x, y, 1) > dens * 1.4 + 0.02:
+				continue
+			# species by altitude, aspect and water: 1 aspen, 2 spruce, 3 pine
+			var hsh := D.hash2(x, y, 2)
+			var kind := 2
+			if bio == D.BIOME.DESERT:
+				kind = 1
+			elif hgt < 8.0 and ((streamside and hsh < 0.6) or grove.get_noise_2d(x, y) > 0.27):
+				kind = 1
+			elif hgt < 8.5 and ((north < -0.12 and hsh < 0.75) or (hgt < 5.0 and hsh < 0.45)):
+				kind = 3
+			trees[i] = kind
 
 
 func _near_terrain(x: int, y: int, r: int, kinds: Array) -> bool:

@@ -359,7 +359,7 @@ func plant_tree(t: Vector2i) -> bool:
 		return false
 	if ter != D.T.GRASS and ter != D.T.FOREST and ter != D.T.MEADOW:
 		return false
-	world.trees[i] = 2 if world.elev[i] > 0.45 or D.hash2(t.x, t.y, 2) < 0.6 else 1
+	world.trees[i] = 2 if world.height[i] > 6.0 else (3 if D.hash2(t.x, t.y, 2) < 0.5 else 1)
 	if ter == D.T.GRASS:
 		world.terrain[i] = D.T.FOREST
 	world.fields_dirty = true

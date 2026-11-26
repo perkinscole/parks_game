@@ -200,8 +200,8 @@ func start_game(seed_val: int, save: Dictionary) -> void:
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
 	env.tonemap_white = 2.2
 	env.adjustment_enabled = true
-	env.adjustment_contrast = 1.08
-	env.adjustment_saturation = 1.12
+	env.adjustment_contrast = 1.06
+	env.adjustment_saturation = 0.98
 	env.ssao_enabled = true
 	env.ssao_radius = 1.2
 	env.ssao_intensity = 1.6
@@ -291,6 +291,7 @@ func _apply_quality(level: int) -> void:
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS if quality >= 1 else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	RenderingServer.directional_shadow_atlas_set_size([2048, 4096, 8192][quality], true)
 	agents.detail = [0.35, 0.7, 1.0][quality]
+	land.set_grass_enabled(quality >= 1)
 	var cfg := ConfigFile.new()
 	cfg.set_value("graphics", "quality", quality)
 	cfg.save("user://wildlands_settings.cfg")
@@ -410,6 +411,7 @@ func _update_sky() -> void:
 	env.ambient_light_energy = 0.4 - 0.08 * day
 	sky_mat.sky_top_color = _mix(Color(0.02, 0.03, 0.09), Color(0.22, 0.3, 0.55), Color(0.2, 0.42, 0.78), day, glow)
 	sky_mat.sky_horizon_color = _mix(Color(0.08, 0.11, 0.22), Color(0.98, 0.62, 0.42), Color(0.68, 0.8, 0.92), day, glow)
+	land.water_mat.set_shader_parameter("sky_col", sky_mat.sky_horizon_color.lerp(sky_mat.sky_top_color, 0.45))
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color
 	sky_mat.ground_bottom_color = sky_mat.sky_horizon_color.darkened(0.3)
 	env.fog_light_color = sky_mat.sky_horizon_color.lerp(Color(0.6, 0.68, 0.78), 0.4 * day)
@@ -880,6 +882,10 @@ func _update_inspector() -> void:
 func _dev_hooks(args: Dictionary) -> void:
 	if args.has("stats"):
 		_terrain_stats()
+		var gcount := 0
+		for k in land._regions:
+			gcount += land._regions[k]["grass"].instance_count
+		print("grass tufts ", gcount, "  grass nodes ", land._grass_nodes.size(), " visible ", land._grass_nodes[0].visible if land._grass_nodes.size() > 0 else false)
 	if args.has("autoplay"):
 		_demo_park()
 	var days := int(args.get("days", "0"))

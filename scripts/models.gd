@@ -272,7 +272,7 @@ static func fit_car(mesh: Mesh, length: float) -> Transform3D:
 ## A tree drawn as a few textured cut-outs baked from a detailed model by
 ## tools/bake_impostor.gd: three upright cards plus two flat canopy layers,
 ## about ten triangles in all. Returns null if the images are not there.
-static func card_tree(name: String, height: float) -> ArrayMesh:
+static func card_tree(name: String, height: float, layers: Array) -> ArrayMesh:
 	var key := "card_" + name
 	if _cache.has(key):
 		return _cache[key]
@@ -294,15 +294,15 @@ static func card_tree(name: String, height: float) -> ArrayMesh:
 					for k in 3:
 						var a := k * PI / 3.0
 						var dir := Vector3(cos(a), 0, sin(a))
-						var nrm := (Vector3(-dir.z, 0, dir.x) * 0.35 + Vector3.UP).normalized()
+						var nrm := Vector3.UP # lit like the canopy as a whole, from either side
 						var b := v.size()
 						v.append(-dir * half); v.append(dir * half)
 						v.append(dir * half + Vector3(0, height, 0)); v.append(-dir * half + Vector3(0, height, 0))
 						uv.append(Vector2(0, 1)); uv.append(Vector2(1, 1)); uv.append(Vector2(1, 0)); uv.append(Vector2(0, 0))
 						for q in 4: n.append(nrm)
-						for q in [0, 1, 2, 0, 2, 3]: idx.append(b + q)
+						for q in [0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2]: idx.append(b + q)
 				else:
-					for layer in [[0.34, 1.0], [0.6, 0.66]]:
+					for layer in layers:
 						var y: float = height * layer[0]
 						var r: float = half * layer[1]
 						var b := v.size()
@@ -323,7 +323,7 @@ static func card_tree(name: String, height: float) -> ArrayMesh:
 				m.albedo_texture = ImageTexture.create_from_image(img)
 				m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
 				m.alpha_scissor_threshold = 0.4
-				m.cull_mode = BaseMaterial3D.CULL_DISABLED
+				m.cull_mode = BaseMaterial3D.CULL_BACK
 				m.vertex_color_use_as_albedo = true
 				m.roughness = 1.0
 				m.metallic_specular = 0.0
@@ -439,6 +439,36 @@ static func fit_animal(mesh: Mesh, size: float, yaw_deg: float, axis: String = "
 	basis = basis.scaled(Vector3(s, s, s))
 	var c := box.get_center()
 	return Transform3D(basis, basis * Vector3(-c.x, -box.position.y, -c.z))
+
+## A tuft of grass blades with UVs running root (0) to tip (1), for the grass shader.
+static func grass_tuft() -> ArrayMesh:
+	if _cache.has("grass"):
+		return _cache["grass"]
+	var v := PackedVector3Array()
+	var n := PackedVector3Array()
+	var uv := PackedVector2Array()
+	for k in 14:
+		var a := k * 2.4 + 0.3
+		var out_dir := Vector3(cos(a), 0, sin(a))
+		var side := Vector3(-out_dir.z, 0, out_dir.x) * 0.016
+		var root := out_dir * (0.02 + 0.022 * (k % 4))
+		var h := 0.09 + 0.036 * (k % 5)
+		var tip := root + out_dir * (0.025 + 0.015 * (k % 3)) + Vector3(0, h, 0)
+		var mid := root.lerp(tip, 0.55) + Vector3(0, 0.008, 0)
+		for p in [[root - side, 0.0], [root + side, 0.0], [mid + side * 0.6, 0.55], [root - side, 0.0], [mid + side * 0.6, 0.55], [mid - side * 0.6, 0.55],
+				[mid - side * 0.6, 0.55], [mid + side * 0.6, 0.55], [tip, 1.0]]:
+			v.append(p[0])
+			n.append(Vector3.UP)
+			uv.append(Vector2(0.5, p[1]))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = v
+	arrays[Mesh.ARRAY_NORMAL] = n
+	arrays[Mesh.ARRAY_TEX_UV] = uv
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_cache["grass"] = mesh
+	return mesh
 
 static func bush() -> ArrayMesh:
 	if _cache.has("bush"):

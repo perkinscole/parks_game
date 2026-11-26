@@ -19,7 +19,7 @@ const NO_FOUNDATION := [D.B.BIN, D.B.SIGN, D.B.PICNIC, D.B.TRAILHEAD, D.B.CRAG, 
 # footprint width (in tiles) that supplied building models are scaled to
 const EXT_WIDTH := {D.B.PICNIC: 0.42, D.B.TRAILHEAD: 0.36, D.B.HIDE: 0.62, D.B.RESTROOM: 0.8, D.B.SNACK: 0.72, D.B.GATE: 1.35,
 	D.B.OVERLOOK: 0.92, D.B.VISITOR_CENTER: 1.85, D.B.RANGER: 1.5, D.B.RESEARCH: 1.6, D.B.CAMP: 1.85, D.B.BIN: 0.3, D.B.SIGN: 0.2, D.B.CRAG: 0.9}
-const VEG := ["trunk", "leaf", "conifer", "conifer2", "rock", "flower", "bush", "reed"]
+const VEG := ["trunk", "leaf", "conifer", "conifer2", "rock", "flower", "bush", "reed", "grass"]
 
 var world: World
 var season := 0
@@ -53,6 +53,9 @@ var _mm := {}
 var _meshes := {}
 var _external := {}
 var _tree_nodes: Array[MultiMeshInstance3D] = []
+var _grass_nodes: Array[MultiMeshInstance3D] = []
+var grass_mat: ShaderMaterial
+var water_mat: ShaderMaterial
 var _region_nodes := {}
 var _ghosted := false
 var _cards := {}
@@ -109,6 +112,24 @@ func setup(w: World, f: Font) -> void:
 	ground.set_shader_parameter("tile_tex", tile_tex)
 	ground.set_shader_parameter("path_tex", path_tex)
 	ground.set_shader_parameter("noise_tex", nz)
+	var bump := NoiseTexture2D.new()
+	bump.width = 512
+	bump.height = 512
+	bump.seamless = true
+	bump.generate_mipmaps = true
+	bump.as_normal_map = true
+	bump.bump_strength = 7.0
+	var bn := FastNoiseLite.new()
+	bn.seed = 9
+	bn.frequency = 0.03
+	bn.fractal_octaves = 5
+	bump.noise = bn
+	ground.set_shader_parameter("bump_tex", bump)
+	grass_mat = ShaderMaterial.new()
+	grass_mat.shader = load("res://shaders/grass.gdshader")
+	water_mat = ShaderMaterial.new()
+	water_mat.shader = load("res://shaders/water.gdshader")
+	water_mat.set_shader_parameter("noise_tex", nz)
 	ground.set_shader_parameter("map_size", Vector2(World.W, World.H))
 
 	for cy in range(0, ceili(World.H / float(CH))):
@@ -128,12 +149,7 @@ func setup(w: World, f: Font) -> void:
 	plane.size = Vector2(World.W + BORDER * 2, World.H + BORDER * 2)
 	water.mesh = plane
 	water.position = Vector3(World.W * 0.5, 0.0, World.H * 0.5)
-	var wm := StandardMaterial3D.new()
-	wm.albedo_color = Color(0.07, 0.2, 0.28, 0.9)
-	wm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	wm.roughness = 0.05
-	wm.metallic = 0.3
-	wm.metallic_specular = 0.9
+	var wm := water_mat
 	water.material_override = wm
 	water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	water.position.y = -0.05
@@ -150,11 +166,13 @@ func setup(w: World, f: Font) -> void:
 
 	_meshes = {"trunk": Models.trunk(), "leaf": _ext("broadleaf", Models.leaf(), 1.35), "conifer": _ext("conifer", Models.conifer(), 1.95),
 		"conifer2": _ext("conifer2", Models.conifer(), 2.1), "conifer_far": Models.conifer(),
-		"rock": _ext("rock", Models.rock(), 0.3), "flower": Models.flower(), "bush": _ext("bush", Models.bush(), 0.2), "reed": Models.reed(),
+		"rock": _ext("rock", Models.rock(), 0.3), "flower": Models.flower(), "bush": _ext("bush", Models.bush(), 0.2), "reed": Models.reed(), "grass": Models.grass_tuft(),
 		"flame": Models.flame(), "litter": Models.litter(), "thistle": Models.thistle(), "milfoil": Models.milfoil(), "orchid": Models.orchid()}
 	# baked cut-out trees (models/impostors) take priority: they look detailed and cost almost nothing
-	for pair in [["conifer", "spruce", 2.0], ["conifer2", "pine", 2.15], ["leaf", "aspen", 1.5], ["conifer_far", "spruce", 2.0]]:
-		var card := Models.card_tree(pair[1], pair[2])
+	var cone := [[0.2, 1.0], [0.36, 0.86], [0.52, 0.68], [0.68, 0.48], [0.83, 0.28]]
+	var crown := [[0.5, 0.7], [0.62, 0.95], [0.74, 1.0], [0.86, 0.72]]
+	for pair in [["conifer", "spruce", 2.0, cone], ["conifer2", "pine", 2.15, crown], ["leaf", "aspen", 1.5, crown], ["conifer_far", "spruce", 2.0, cone]]:
+		var card := Models.card_tree(pair[1], pair[2], pair[3])
 		if card != null:
 			_meshes[pair[0]] = card
 			_cards[card] = true
@@ -224,6 +242,13 @@ func _new_mm(key: String, parent: Node) -> MultiMesh:
 		fm.vertex_color_use_as_albedo = true
 		fm.albedo_color = Color(3.0, 1.3, 0.35)
 		mmi.material_override = fm
+	if key == "grass":
+		mmi.material_override = grass_mat
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mmi.visibility_range_end = 62.0
+		mmi.visibility_range_end_margin = 10.0
+		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+		_grass_nodes.append(mmi)
 	if key in ["trunk", "leaf", "conifer", "conifer2"]:
 		_tree_nodes.append(mmi)
 	elif key in ["flower", "bush", "reed", "rock"]:
@@ -234,6 +259,12 @@ func _new_mm(key: String, parent: Node) -> MultiMesh:
 		mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 	parent.add_child(mmi)
 	return mm
+
+
+## Grass blades are the first thing to drop on slower machines.
+func set_grass_enabled(on: bool) -> void:
+	for n in _grass_nodes:
+		n.visible = on
 
 
 ## Makes the forest see-through (while building) so the ground is visible.
@@ -473,6 +504,8 @@ func _process(delta: float) -> void:
 	ground.set_shader_parameter("snowline", (4.0 if season == 3 else (17.0 if season == 0 else 22.0)) + climate * 4.0)
 	ground.set_shader_parameter("snow_all", 1.0 if season == 3 else 0.0)
 	ground.set_shader_parameter("autumn", 1.0 if season == 2 else 0.0)
+	grass_mat.set_shader_parameter("tint", [Vector3(1, 1, 1), Vector3(1.05, 1.0, 0.85), Vector3(1.4, 1.05, 0.5), Vector3(1.1, 1.0, 0.8)][season])
+	grass_mat.set_shader_parameter("snow", 0.9 if season == 3 else 0.0)
 	if entrance_marker != null and entrance_marker.visible:
 		entrance_marker.get_child(0).scale = Vector3.ONE * (1.0 + sin(_t * 3.0) * 0.12)
 		entrance_marker.visible = world.count_kind(D.B.GATE) == 0
@@ -513,26 +546,26 @@ func tile_color(i: int) -> Color:
 	match t:
 		D.T.DEEP: c = Color("23485c")
 		D.T.WATER: c = Color("5d7f7a")
-		D.T.SAND: c = Color("b9a67a")
-		D.T.GRASS: c = Color("5f8f44")
-		D.T.MEADOW: c = Color("7ea24e")
-		D.T.FOREST: c = Color("33562f")
-		D.T.ROCK: c = Color("77716a")
-		D.T.PEAK: c = Color("6b676b")
+		D.T.SAND: c = Color("a8966e")
+		D.T.GRASS: c = Color("5a6e3a")
+		D.T.MEADOW: c = Color("6f7d42")
+		D.T.FOREST: c = Color("34412a")
+		D.T.ROCK: c = Color("6f6a62")
+		D.T.PEAK: c = Color("615e60")
 	match bio:
 		D.BIOME.DESERT:
-			if t == D.T.SAND: c = Color("bd8a58")
-			elif t == D.T.GRASS: c = Color("8f8f62")
-			elif t == D.T.ROCK: c = Color("a35a3a")
+			if t == D.T.SAND: c = Color("b08052")
+			elif t == D.T.GRASS: c = Color("85805a")
+			elif t == D.T.ROCK: c = Color("9a5436")
 			c.a = 0.0 # flagged below
 		D.BIOME.VALLEY:
-			if t == D.T.GRASS: c = Color("7f9a4a")
-			elif t == D.T.MEADOW: c = Color("93a850")
+			if t == D.T.GRASS: c = Color("71783f")
+			elif t == D.T.MEADOW: c = Color("7d8245")
 		D.BIOME.WETLAND:
-			if t == D.T.GRASS: c = Color("4f7a36")
-			elif t == D.T.SAND: c = Color("6f6a48")
+			if t == D.T.GRASS: c = Color("46602f")
+			elif t == D.T.SAND: c = Color("5f5a40")
 		D.BIOME.ALPINE:
-			if t == D.T.MEADOW or t == D.T.GRASS: c = Color("7d8a55")
+			if t == D.T.MEADOW or t == D.T.GRASS: c = Color("6b7248")
 	if world.burned[i] > 0:
 		c = Color("2c2622")
 	c.a = 1.0 if bio == D.BIOME.DESERT else 0.0
@@ -902,7 +935,7 @@ func _fill(mm: MultiMesh, xforms: Array, colors: Array) -> void:
 		if _cards.has(mm.mesh):
 			# cut-outs carry their own colours: only a gentle per-tree and seasonal tint
 			var peak := maxf(maxf(col.r, col.g), maxf(col.b, 0.001))
-			col = Color.WHITE.lerp(Color(col.r / peak, col.g / peak, col.b / peak), 0.3) * 0.78
+			col = Color.WHITE.lerp(Color(col.r / peak, col.g / peak, col.b / peak), 0.3) * (0.5 if mm.mesh == _meshes["leaf"] else 0.78)
 			if season == 3:
 				col = col.lerp(Color(1.5, 1.6, 1.75), 0.45)
 		mm.set_instance_color(i, Color.WHITE if supplied else col)
@@ -937,44 +970,69 @@ func _rebuild_region(key: Vector2i) -> void:
 			var h := D.hash2(x, y, 1)
 			var h2 := D.hash2(x, y, 7)
 			var kind := world.trees[i]
+			# grass blades wherever there is living ground
+			var blades := 0
+			var blade_h := 1.0
+			if t == D.T.MEADOW: blades = 14
+			elif t == D.T.GRASS: blades = 12
+			elif t == D.T.FOREST: blades = 5
+			if bio == D.BIOME.WETLAND and t == D.T.GRASS:
+				blades = 14
+				blade_h = 1.6
+			elif bio == D.BIOME.DESERT:
+				blades = 3 if t == D.T.GRASS else 0
+			elif bio == D.BIOME.ALPINE:
+				blades = mini(blades, 8)
+				blade_h = 0.6
+			if blades > 0:
+				var ground_col := tile_color(i)
+				var straw := Color("8a7f4a") if bio != D.BIOME.DESERT else Color("a39a66")
+				for k in blades:
+					var gx := x + D.hash2(x, y, 100 + k)
+					var gz := y + D.hash2(x, y, 120 + k)
+					var gv := D.hash2(x, y, 140 + k)
+					out.grass[0].append(_xf(gx, gz, (0.8 + gv * 0.9) * blade_h, gv * TAU, 0.0))
+					out.grass[1].append(ground_col.lightened(0.3).lerp(straw, gv * gv * 0.6))
 			if kind > 0:
-				# forests are open enough to see the ground, and keep back from roads and buildings
+				# trees keep back from roads and buildings
 				if _beside_development(x, y):
 					continue
+				var dens: float = world.tree_density[i] if world.tree_density.size() > i else 0.6
+				if dens <= 0.0:
+					dens = 0.6 # planted or regrown
 				var count := 1
-				if t == D.T.FOREST and h < 0.5:
-					count = 2
-				# supplied tree models are heavier than the built-in ones: plant fewer, larger trees
-				var heavy: bool = _external.has(_meshes["conifer" if kind == 2 else "leaf"])
-				var is_card: bool = _cards.has(_meshes["conifer" if kind == 2 else "leaf"])
+				if dens > 0.55 and h < 0.8: count = 2
+				if dens > 0.85 and h < 0.45: count = 3
+				var mesh_key := "leaf" if kind == 1 else ("conifer2" if kind == 3 else "conifer")
+				var heavy: bool = _external.has(_meshes[mesh_key])
+				var is_card: bool = _cards.has(_meshes[mesh_key])
 				if heavy:
-					count = 2 if (t == D.T.FOREST and h < 0.3) else 1
+					count = mini(count, 2)
+				# trees shrink toward the treeline
+				var stunt := 1.0 - 0.55 * smoothstep(8.0, 13.0, world.height[i])
 				for k in count:
 					var hh := D.hash2(x, y, 8 + k)
-					var px := x + 0.1 + D.hash2(x, y, 50 + k) * 0.8
-					var pz := y + 0.1 + D.hash2(x, y, 60 + k) * 0.8
-					var s := (1.45 if heavy else 1.15) + hh * 0.85
-					if bio == D.BIOME.ALPINE: s = 0.6 + hh * 0.6
-					elif bio == D.BIOME.DESERT: s = 0.55 + hh * 0.3
+					var px := x + 0.08 + D.hash2(x, y, 50 + k) * 0.84
+					var pz := y + 0.08 + D.hash2(x, y, 60 + k) * 0.84
+					var s := ((1.45 if heavy else 1.1) + hh * 0.9) * stunt
+					if kind == 3: s *= 1.12
+					if bio == D.BIOME.DESERT: s = 0.5 + hh * 0.3
 					var xf := _xf(px, pz, s, hh * TAU, 0.08, 0.9 + D.hash2(x, y, 70 + k) * 0.35)
 					var own_trunk: bool = heavy or is_card
 					if not own_trunk:
 						out.trunk[0].append(xf)
-					if kind == 2:
+					if kind != 1:
 						if not own_trunk: out.trunk[1].append(Color.WHITE)
-						var ck := "conifer2" if (hh > 0.6 and (_external.has(_meshes["conifer2"]) or _cards.has(_meshes["conifer2"]))) else "conifer"
-						out[ck][0].append(xf)
-						out[ck][1].append(_conifer_color(D.hash2(x, y, 12 + k)))
+						out[mesh_key][0].append(xf)
+						out[mesh_key][1].append(_conifer_color(D.hash2(x, y, 12 + k)))
 					else:
 						# aspens have pale bark
-						if not own_trunk: out.trunk[1].append(Color(2.6, 2.5, 2.3) if bio == D.BIOME.VALLEY else Color.WHITE)
+						if not own_trunk: out.trunk[1].append(Color(2.6, 2.5, 2.3) if bio != D.BIOME.DESERT else Color.WHITE)
 						out.leaf[0].append(xf)
 						var pal: Array = leaf_pal[season]
 						var col: Color = pal[0].lerp(pal[1], D.hash2(x, y, 12 + k))
 						if bio == D.BIOME.DESERT:
 							col = Color("4a5a36")
-						elif season == 2 and bio != D.BIOME.VALLEY and hh < 0.4:
-							col = Color("9a3f26").lerp(Color("c9772e"), hh * 2.0)
 						if is_card and season == 2:
 							col = Color(1.0, 0.72, 0.2)
 						out.leaf[1].append(col)
@@ -996,7 +1054,7 @@ func _rebuild_region(key: Vector2i) -> void:
 			elif (t == D.T.GRASS or t == D.T.MEADOW) and bio != D.BIOME.DESERT:
 				if t == D.T.MEADOW and season != 3:
 					for k in 3:
-						out.flower[0].append(_xf(x + D.hash2(x, y, 20 + k), y + D.hash2(x, y, 30 + k), 0.3 + h * 0.3, 0.0))
+						out.flower[0].append(_xf(x + D.hash2(x, y, 20 + k), y + D.hash2(x, y, 30 + k), 0.14 + h * 0.16, 0.0, -0.06))
 						out.flower[1].append(bloom[int(D.hash2(x, y, 40 + k) * 4.0) % 4])
 				if h2 < 0.22:
 					out.bush[0].append(_xf(x + h, y + h2 * 4.0, 0.5 + h * 0.6, h * 9.0))
