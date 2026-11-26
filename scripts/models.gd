@@ -260,6 +260,82 @@ static func fit(mesh: Mesh, size: float, by_width: bool = false) -> Transform3D:
 	var c := box.get_center()
 	return Transform3D(Basis().scaled(Vector3(s, s, s)), Vector3(-c.x * s, -box.position.y * s, -c.z * s))
 
+## Fit for a supplied vehicle: on its wheels, centred, `length` long, nose toward +Z.
+static func fit_car(mesh: Mesh, length: float) -> Transform3D:
+	var box := mesh.get_aabb()
+	var along_x := box.size.x > box.size.z
+	var s := length / maxf(maxf(box.size.x, box.size.z), 0.0001)
+	var basis := Basis(Vector3.UP, PI * 0.5 if along_x else 0.0).scaled(Vector3(s, s, s))
+	var c := box.get_center()
+	return Transform3D(basis, basis * Vector3(-c.x, -box.position.y, -c.z))
+
+## A tree drawn as a few textured cut-outs baked from a detailed model by
+## tools/bake_impostor.gd: three upright cards plus two flat canopy layers,
+## about ten triangles in all. Returns null if the images are not there.
+static func card_tree(name: String, height: float) -> ArrayMesh:
+	var key := "card_" + name
+	if _cache.has(key):
+		return _cache[key]
+	var side_path := "res://models/impostors/%s_side.png" % name
+	var top_path := "res://models/impostors/%s_top.png" % name
+	var mesh: ArrayMesh = null
+	if FileAccess.file_exists(side_path) and FileAccess.file_exists(top_path):
+		var side := Image.load_from_file(ProjectSettings.globalize_path(side_path))
+		var top := Image.load_from_file(ProjectSettings.globalize_path(top_path))
+		if side != null and top != null:
+			mesh = ArrayMesh.new()
+			var half := height * float(side.get_width()) / side.get_height() * 0.5
+			for pass_i in 2:
+				var v := PackedVector3Array()
+				var n := PackedVector3Array()
+				var uv := PackedVector2Array()
+				var idx := PackedInt32Array()
+				if pass_i == 0:
+					for k in 3:
+						var a := k * PI / 3.0
+						var dir := Vector3(cos(a), 0, sin(a))
+						var nrm := (Vector3(-dir.z, 0, dir.x) * 0.35 + Vector3.UP).normalized()
+						var b := v.size()
+						v.append(-dir * half); v.append(dir * half)
+						v.append(dir * half + Vector3(0, height, 0)); v.append(-dir * half + Vector3(0, height, 0))
+						uv.append(Vector2(0, 1)); uv.append(Vector2(1, 1)); uv.append(Vector2(1, 0)); uv.append(Vector2(0, 0))
+						for q in 4: n.append(nrm)
+						for q in [0, 1, 2, 0, 2, 3]: idx.append(b + q)
+				else:
+					for layer in [[0.34, 1.0], [0.6, 0.66]]:
+						var y: float = height * layer[0]
+						var r: float = half * layer[1]
+						var b := v.size()
+						v.append(Vector3(-r, y, -r)); v.append(Vector3(r, y, -r)); v.append(Vector3(r, y, r)); v.append(Vector3(-r, y, r))
+						uv.append(Vector2(0, 0)); uv.append(Vector2(1, 0)); uv.append(Vector2(1, 1)); uv.append(Vector2(0, 1))
+						for q in 4: n.append(Vector3.UP)
+						for q in [0, 1, 2, 0, 2, 3]: idx.append(b + q)
+				var arrays := []
+				arrays.resize(Mesh.ARRAY_MAX)
+				arrays[Mesh.ARRAY_VERTEX] = v
+				arrays[Mesh.ARRAY_NORMAL] = n
+				arrays[Mesh.ARRAY_TEX_UV] = uv
+				arrays[Mesh.ARRAY_INDEX] = idx
+				mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+				var img: Image = side if pass_i == 0 else top
+				img.generate_mipmaps()
+				var m := StandardMaterial3D.new()
+				m.albedo_texture = ImageTexture.create_from_image(img)
+				m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+				m.alpha_scissor_threshold = 0.4
+				m.cull_mode = BaseMaterial3D.CULL_DISABLED
+				m.vertex_color_use_as_albedo = true
+				m.roughness = 1.0
+				m.metallic_specular = 0.0
+				m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+				# trees between the camera and what you are looking at fade away
+				m.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_DITHER
+				m.distance_fade_min_distance = 5.0
+				m.distance_fade_max_distance = 9.0
+				mesh.surface_set_material(pass_i, m)
+	_cache[key] = mesh
+	return mesh
+
 static func bush() -> ArrayMesh:
 	if _cache.has("bush"):
 		return _cache["bush"]

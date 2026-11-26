@@ -307,7 +307,9 @@ func _flat_mesh_instance() -> MeshInstance3D:
 func _update_camera() -> void:
 	target.x = clampf(target.x, 0.0, World.W)
 	target.z = clampf(target.z, 0.0, World.H)
-	target.y = lerpf(target.y, land.top_at(target.x, target.z), 0.12)
+	var ground_y := land.top_at(target.x, target.z)
+	# follow the terrain smoothly, but never let the view sink into a hillside
+	target.y = ground_y if absf(ground_y - target.y) > 2.0 else lerpf(target.y, ground_y, 0.12)
 	pitch = clampf(pitch, 0.16, 1.45)
 	dist = clampf(dist, 2.5, 320.0)
 	var offset := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist

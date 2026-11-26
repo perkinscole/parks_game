@@ -27,6 +27,8 @@ var _rigs := {}
 var _markers: Array[MeshInstance3D] = []
 var _ring: MeshInstance3D
 var _count := {}
+var _car_keys: Array[String] = []
+var _car_fit := {}
 
 
 func setup(g: Game, terrain: Terrain3D) -> void:
@@ -35,6 +37,15 @@ func setup(g: Game, terrain: Terrain3D) -> void:
 	var meshes := {"body": Models.person_body(), "head": Models.person_head(), "leg": Models.person_leg(), "arm": Models.person_arm(),
 		"pack": Models.pack(), "car": Models.car(),
 		"hat_ranger": Models.hat("ranger"), "hat_maint": Models.hat("maint"), "hat_eco": Models.hat("eco")}
+	# supplied vehicle models (models/car.glb, car2.glb, car3.glb) replace the built-in car
+	for name in ["car", "car2", "car3"]:
+		var ext := Models.external(name)
+		if ext != null:
+			meshes["car_" + name] = ext
+			_car_fit["car_" + name] = Models.fit_car(ext, 0.56)
+			_car_keys.append("car_" + name)
+	if _car_keys.is_empty():
+		_car_keys.append("car")
 	for key: String in meshes:
 		var mmi := MultiMeshInstance3D.new()
 		var mm := MultiMesh.new()
@@ -42,13 +53,14 @@ func setup(g: Game, terrain: Terrain3D) -> void:
 		mm.use_colors = true
 		mm.mesh = meshes[key]
 		var cap := MAX_PEOPLE
-		if key == "car": cap = MAX_CARS
+		if key.begins_with("car"): cap = MAX_CARS
 		elif key == "leg" or key == "arm": cap = MAX_PEOPLE * 2
 		elif key.begins_with("hat"): cap = 64
 		mm.instance_count = cap
 		mm.visible_instance_count = 0
 		mmi.multimesh = mm
-		mmi.material_override = land.mat
+		if not _car_fit.has(key):
+			mmi.material_override = land.mat
 		mmi.custom_aabb = AABB(Vector3(-10, -5, -10), Vector3(World.W + 20, 40, World.H + 20))
 		add_child(mmi)
 		_mm[key] = mm
@@ -153,6 +165,14 @@ func _car_xf(p: Vector2, d: Vector2, s: float) -> Transform3D:
 	return Transform3D(Basis(right, up, fwd).scaled(Vector3(s, s, s)), here + Vector3(0, 0.02, 0))
 
 
+func _car(gr, xf: Transform3D) -> void:
+	var key: String = _car_keys[gr.id % _car_keys.size()]
+	if _car_fit.has(key):
+		_put(key, xf * _car_fit[key], Color.WHITE)
+	else:
+		_put(key, xf, gr.car_color)
+
+
 func _group(gr) -> void:
 	var state: int = gr.state
 	if state == Visitors.S.GONE:
@@ -160,10 +180,10 @@ func _group(gr) -> void:
 	if state == Visitors.S.DRIVE_IN or state == Visitors.S.DRIVE_OUT:
 		var d: Vector2 = gr.dir_at(gr.dist)
 		var p: Vector2 = gr.pos_at(gr.dist) + Vector2(-d.y, d.x) * 5.5
-		_put("car", _car_xf(p, d, 1.0), gr.car_color)
+		_car(gr, _car_xf(p, d, 1.0))
 		return
 	var cp := World.center(gr.lot) + Vector2(-8.0 + gr.slot * 16.0, 0)
-	_put("car", _car_xf(cp, Vector2(0, -1), 1.0), gr.car_color)
+	_car(gr, _car_xf(cp, Vector2(0, -1), 1.0))
 	var walking := state == Visitors.S.WALK
 	var base := World.center(gr.cur)
 	var pack: bool = gr.vt.id == "hiker" or gr.vt.id == "climber" or gr.vt.id == "camper"

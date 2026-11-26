@@ -21,8 +21,16 @@ Trees are drawn thousands at a time, so keep them low-poly (a few hundred triang
 
 ## What is here now
 
-The building models in this folder were generated with Meshy and are used automatically.
-`optional/` holds a Meshy spruce, aspen and boulder that are **not** active: the park draws
-tens of thousands of trees, and at about 2,000 triangles each these would be too heavy for
-most machines. To try them anyway, move a file up into this folder. Delete any `.glb` here
-to go back to the built-in model.
+- The **building** and **car** models in this folder (`car.glb`, `car2.glb`, `car3.glb`) were generated with
+  Meshy and are used automatically. Delete any `.glb` to go back to the built-in model.
+- **Trees** work differently, because the park draws tens of thousands of them. `impostors/` holds
+  cut-out images baked from three detailed Meshy trees (spruce, pine, aspen); each tree in the game is
+  about ten triangles textured with those images. To bake your own tree model into cut-outs:
+
+  ```bash
+  godot --path . -s tools/bake_impostor.gd -- /path/to/tree.glb spruce
+  ```
+
+  (use `spruce`, `pine` or `aspen` as the name to replace that tree). Delete the images to return to
+  the built-in trees.
+- `optional/` holds earlier, lighter Meshy trees and a boulder that are not used.

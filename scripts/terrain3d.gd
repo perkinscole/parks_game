@@ -19,7 +19,7 @@ const NO_FOUNDATION := [D.B.BIN, D.B.SIGN, D.B.PICNIC, D.B.TRAILHEAD, D.B.CRAG, 
 # footprint width (in tiles) that supplied building models are scaled to
 const EXT_WIDTH := {D.B.PICNIC: 0.42, D.B.TRAILHEAD: 0.36, D.B.HIDE: 0.62, D.B.RESTROOM: 0.8, D.B.SNACK: 0.72, D.B.GATE: 1.35,
 	D.B.OVERLOOK: 0.92, D.B.VISITOR_CENTER: 1.85, D.B.RANGER: 1.5, D.B.RESEARCH: 1.6, D.B.CAMP: 1.85, D.B.BIN: 0.3, D.B.SIGN: 0.2, D.B.CRAG: 0.9}
-const VEG := ["trunk", "leaf", "conifer", "rock", "flower", "bush", "reed"]
+const VEG := ["trunk", "leaf", "conifer", "conifer2", "rock", "flower", "bush", "reed"]
 
 var world: World
 var season := 0
@@ -52,6 +52,7 @@ var _regions := {} # Vector2i -> {name: MultiMesh}
 var _mm := {}
 var _meshes := {}
 var _external := {}
+var _cards := {}
 var _struct_nodes := {}
 var _lights: Array[OmniLight3D] = []
 var _orchid_tiles: Array[Vector2i] = []
@@ -145,10 +146,17 @@ func setup(w: World, f: Font) -> void:
 	add_child(_deck)
 
 	_meshes = {"trunk": Models.trunk(), "leaf": _ext("broadleaf", Models.leaf(), 1.35), "conifer": _ext("conifer", Models.conifer(), 1.95),
+		"conifer2": _ext("conifer2", Models.conifer(), 2.1), "conifer_far": Models.conifer(),
 		"rock": _ext("rock", Models.rock(), 0.3), "flower": Models.flower(), "bush": _ext("bush", Models.bush(), 0.2), "reed": Models.reed(),
 		"flame": Models.flame(), "litter": Models.litter(), "thistle": Models.thistle(), "milfoil": Models.milfoil(), "orchid": Models.orchid()}
+	# baked cut-out trees (models/impostors) take priority: they look detailed and cost almost nothing
+	for pair in [["conifer", "spruce", 2.0], ["conifer2", "pine", 2.15], ["leaf", "aspen", 1.5], ["conifer_far", "spruce", 2.0]]:
+		var card := Models.card_tree(pair[1], pair[2])
+		if card != null:
+			_meshes[pair[0]] = card
+			_cards[card] = true
 	for key in ["flame", "litter", "thistle", "milfoil", "orchid", "outer"]:
-		_mm[key] = _new_mm("conifer" if key == "outer" else key, self)
+		_mm[key] = _new_mm("conifer_far" if key == "outer" else key, self)
 	for ry in range(0, ceili(World.H / float(REG))):
 		for rx in range(0, ceili(World.W / float(REG))):
 			var holder := Node3D.new()
@@ -198,8 +206,8 @@ func _new_mm(key: String, parent: Node) -> MultiMesh:
 	mm.use_colors = true
 	mm.mesh = _meshes[key]
 	mmi.multimesh = mm
-	if not _external.has(mm.mesh):
-		mmi.material_override = tree_mat if key in ["trunk", "leaf", "conifer"] else mat
+	if not _external.has(mm.mesh) and not _cards.has(mm.mesh):
+		mmi.material_override = tree_mat if key in ["trunk", "leaf", "conifer", "conifer2", "conifer_far"] else mat
 	if key in ["flower", "litter", "milfoil", "flame", "reed"]:
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	if key == "flame":
@@ -840,7 +848,14 @@ func _fill(mm: MultiMesh, xforms: Array, colors: Array) -> void:
 	for i in xforms.size():
 		# supplied models carry their own colours and need fitting to size
 		mm.set_instance_transform(i, xforms[i] * fit_xf if supplied else xforms[i])
-		mm.set_instance_color(i, Color.WHITE if supplied else colors[i])
+		var col: Color = colors[i]
+		if _cards.has(mm.mesh):
+			# cut-outs carry their own colours: only a gentle per-tree and seasonal tint
+			var peak := maxf(maxf(col.r, col.g), maxf(col.b, 0.001))
+			col = Color.WHITE.lerp(Color(col.r / peak, col.g / peak, col.b / peak), 0.3) * 0.78
+			if season == 3:
+				col = col.lerp(Color(1.5, 1.6, 1.75), 0.45)
+		mm.set_instance_color(i, Color.WHITE if supplied else col)
 
 
 func _xf(x: float, z: float, s: float, yaw: float, sink: float = 0.0, squash: float = 1.0) -> Transform3D:
@@ -876,21 +891,27 @@ func _rebuild_region(key: Vector2i) -> void:
 				var count := 2 if t == D.T.FOREST else 1
 				if t == D.T.FOREST and h < 0.45:
 					count = 3
+				# supplied tree models are heavier than the built-in ones: plant fewer, larger trees
+				var heavy: bool = _external.has(_meshes["conifer" if kind == 2 else "leaf"])
+				var is_card: bool = _cards.has(_meshes["conifer" if kind == 2 else "leaf"])
+				if heavy:
+					count = 2 if (t == D.T.FOREST and h < 0.3) else 1
 				for k in count:
 					var hh := D.hash2(x, y, 8 + k)
 					var px := x + 0.1 + D.hash2(x, y, 50 + k) * 0.8
 					var pz := y + 0.1 + D.hash2(x, y, 60 + k) * 0.8
-					var s := 1.3 + hh * 1.0
+					var s := (1.55 if heavy else 1.3) + hh * 1.0
 					if bio == D.BIOME.ALPINE: s = 0.6 + hh * 0.6
 					elif bio == D.BIOME.DESERT: s = 0.55 + hh * 0.3
 					var xf := _xf(px, pz, s, hh * TAU, 0.08, 0.9 + D.hash2(x, y, 70 + k) * 0.35)
-					var own_trunk: bool = _external.has(_meshes["conifer" if kind == 2 else "leaf"])
+					var own_trunk: bool = heavy or is_card
 					if not own_trunk:
 						out.trunk[0].append(xf)
 					if kind == 2:
 						if not own_trunk: out.trunk[1].append(Color.WHITE)
-						out.conifer[0].append(xf)
-						out.conifer[1].append(_conifer_color(D.hash2(x, y, 12 + k)))
+						var ck := "conifer2" if (hh > 0.6 and (_external.has(_meshes["conifer2"]) or _cards.has(_meshes["conifer2"]))) else "conifer"
+						out[ck][0].append(xf)
+						out[ck][1].append(_conifer_color(D.hash2(x, y, 12 + k)))
 					else:
 						# aspens have pale bark
 						if not own_trunk: out.trunk[1].append(Color(2.6, 2.5, 2.3) if bio == D.BIOME.VALLEY else Color.WHITE)
@@ -901,6 +922,8 @@ func _rebuild_region(key: Vector2i) -> void:
 							col = Color("4a5a36")
 						elif season == 2 and bio != D.BIOME.VALLEY and hh < 0.4:
 							col = Color("9a3f26").lerp(Color("c9772e"), hh * 2.0)
+						if is_card and season == 2:
+							col = Color(1.0, 0.72, 0.2)
 						out.leaf[1].append(col)
 			elif t == D.T.ROCK and bio != D.BIOME.DESERT and h < 0.3:
 				out.rock[0].append(_xf(x + h2, y + h * 3.0, 0.8 + h2 * 2.2, h * TAU, 0.05))
