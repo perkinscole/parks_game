@@ -286,7 +286,7 @@ func _apply_quality(level: int) -> void:
 	vp.scaling_3d_scale = [0.6, 0.8, 1.0][quality]
 	vp.msaa_3d = Viewport.MSAA_2X if quality == 2 else Viewport.MSAA_DISABLED
 	vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED if quality == 2 else Viewport.SCREEN_SPACE_AA_FXAA
-	env.ssao_enabled = quality == 2
+	env.ssao_enabled = quality >= 1
 	env.glow_enabled = quality >= 1
 	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS if quality >= 1 else DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
 	RenderingServer.directional_shadow_atlas_set_size([2048, 4096, 8192][quality], true)
@@ -401,14 +401,14 @@ func _update_sky() -> void:
 	var night := 1.0 - day
 	if day > 0.02:
 		sun.rotation = Vector3(deg_to_rad(-(7.0 + 44.0 * up)), deg_to_rad(lerpf(105.0, -105.0, p)), 0.0)
-		sun.light_color = Color(1.0, 0.96, 0.9).lerp(Color(1.0, 0.62, 0.36), glow)
-		sun.light_energy = (1.05 + 0.5 * glow) * day * (1.0 - 0.62 * _overcast)
+		sun.light_color = Color(1.0, 0.95, 0.86).lerp(Color(1.0, 0.6, 0.34), glow)
+		sun.light_energy = (1.25 + 0.45 * glow) * day * (1.0 - 0.62 * _overcast)
 	else:
 		sun.rotation = Vector3(deg_to_rad(-48.0), deg_to_rad(40.0), 0.0)
 		sun.light_color = Color(0.55, 0.66, 1.0)
 		sun.light_energy = 0.32 * smoothstep(0.98, 1.0, night) + 0.0001
 	env.ambient_light_color = _mix(Color(0.2, 0.26, 0.45), Color(0.6, 0.5, 0.55), Color(0.5, 0.6, 0.8), day, glow)
-	env.ambient_light_energy = 0.4 - 0.08 * day
+	env.ambient_light_energy = 0.36 - 0.04 * day
 	sky_mat.sky_top_color = _mix(Color(0.02, 0.03, 0.09), Color(0.22, 0.3, 0.55), Color(0.2, 0.42, 0.78), day, glow)
 	sky_mat.sky_horizon_color = _mix(Color(0.08, 0.11, 0.22), Color(0.98, 0.62, 0.42), Color(0.68, 0.8, 0.92), day, glow)
 	land.water_mat.set_shader_parameter("sky_col", sky_mat.sky_horizon_color.lerp(sky_mat.sky_top_color, 0.45))
@@ -428,7 +428,7 @@ func _update_sky() -> void:
 	sky_mat.sky_horizon_color = sky_mat.sky_horizon_color.lerp(grey, _overcast)
 	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color
 	env.fog_light_color = env.fog_light_color.lerp(grey, _overcast)
-	env.fog_density = lerpf(0.0006, 0.005 if wx != "snow" else 0.009, _overcast)
+	env.fog_density = lerpf(0.0006, 0.005 if wx != "snow" else 0.009, _overcast) * clampf(55.0 / dist, 0.12, 1.0)
 	env.ambient_light_energy += 0.12 * _overcast
 	if wx == "heat":
 		env.fog_light_color = env.fog_light_color.lerp(Color(0.9, 0.8, 0.6), 0.4)
@@ -919,6 +919,12 @@ func _dev_hooks(args: Dictionary) -> void:
 				dist = float(args.get("dist", "3.0"))
 				pitch = 0.6
 				break
+	if args.has("landmark"): # point the camera at a landmark, e.g. --landmark=falls
+		for lm in world.landmarks:
+			if lm.kind == args.landmark:
+				target = Vector3(lm.tile.x + 0.5, 0, lm.tile.y + 0.5)
+				dist = float(args.get("dist", "12"))
+				pitch = 0.5
 	zoom_goal = dist
 	if args.has("panel"):
 		hud.toggle_panel(args.panel)

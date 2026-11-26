@@ -12,6 +12,7 @@ const DIRS: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), 
 var terrain := PackedByteArray()
 var elev := PackedFloat32Array()
 var trees := PackedByteArray() # 0 none, 1 aspen / broadleaf, 2 spruce, 3 pine
+var gen: TerrainGen # kept so scenery beyond the map can follow the same landforms
 var tree_density := PackedFloat32Array() # 0..1, how thickly trees grow on each tile
 var build := PackedByteArray()
 var sid := PackedInt32Array() # structure id per tile
@@ -125,6 +126,7 @@ func generate(seed_val: int) -> void:
 	# shape the land first (see terrain_gen.gd), then decide what grows where
 	var tg := TerrainGen.new()
 	tg.generate(W, H, seed_val)
+	gen = tg
 	height = tg.height
 	wlevel = tg.level
 	biome.resize(n)

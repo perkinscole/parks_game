@@ -25,6 +25,12 @@ var dry := PackedFloat32Array() # > 0.78 means desert
 var mountain := PackedFloat32Array() # 0..1 mountain-range mask
 var falls: Array[Vector2i] = []
 
+var warp_a: FastNoiseLite
+var warp_b: FastNoiseLite
+var base: FastNoiseLite
+var ridge: FastNoiseLite
+var mask: FastNoiseLite
+
 # binary heap for the priority flood
 var _hk := PackedFloat32Array()
 var _hv := PackedInt32Array()
@@ -54,11 +60,11 @@ func generate(w: int, h: int, seed_val: int) -> void:
 	mesa.fill(0)
 	dry.resize(n)
 	mountain.resize(n)
-	var warp_a := _noise(seed_val + 11, 0.008, 2)
-	var warp_b := _noise(seed_val + 12, 0.008, 2)
-	var base := _noise(seed_val + 13, 0.011, 4)
-	var ridge := _noise(seed_val + 14, 0.015, 5, true)
-	var mask := _noise(seed_val + 15, 0.0055, 2)
+	warp_a = _noise(seed_val + 11, 0.008, 2)
+	warp_b = _noise(seed_val + 12, 0.008, 2)
+	base = _noise(seed_val + 13, 0.011, 4)
+	ridge = _noise(seed_val + 14, 0.013, 3, true)
+	mask = _noise(seed_val + 15, 0.0055, 2)
 	var basin := _noise(seed_val + 16, 0.012, 3)
 	var dryn := _noise(seed_val + 191, 0.011, 2)
 
@@ -131,6 +137,16 @@ func generate(w: int, h: int, seed_val: int) -> void:
 				height[i] -= mv
 				height[r] += mv
 
+	# weathering rounds off needle-sharp summits
+	var soft := height.duplicate()
+	for y in range(1, H - 1):
+		for x in range(1, W - 1):
+			var i := y * W + x
+			if height[i] > 7.0:
+				var avg := (height[i - 1] + height[i + 1] + height[i - W] + height[i + W]) * 0.25
+				soft[i] = lerpf(height[i], avg, 0.55)
+	height = soft
+
 	# flat-topped sandstone mesas, added after erosion so their rims stay sharp
 	var mesan := _noise(seed_val + 191, 0.044, 2)
 	for y in H:
@@ -196,9 +212,11 @@ func generate(w: int, h: int, seed_val: int) -> void:
 			continue
 		var x := i % W
 		var y := i / W
-		if acc[i] > 170.0 and x > 0 and y > 0 and x < W - 1 and y < H - 1:
+		var drop := height[i] - fill[drain[i]]
+		# open streams only where the ground is gentle enough to hold one; on
+		# cliffs the water runs unseen through the rocks
+		if acc[i] > 170.0 and x > 0 and y > 0 and x < W - 1 and y < H - 1 and height[i] < 10.5 and drop < 1.6:
 			river[i] = 1
-			var drop := height[i] - fill[drain[i]]
 			if drop > 1.3:
 				cands.append([drop * sqrt(acc[i]), Vector2i(x, y)])
 	for i in n:
@@ -208,6 +226,19 @@ func generate(w: int, h: int, seed_val: int) -> void:
 	cands.sort_custom(func(a, b): return a[0] > b[0])
 	for c in cands:
 		falls.append(c[1])
+
+
+## The un-eroded lie of the land at any point, including beyond the map, so
+## the surrounding country shares the park's ranges and valleys.
+func relief(x: float, y: float) -> float:
+	var wx := x + warp_a.get_noise_2d(x, y) * 24.0
+	var wy := y + warp_b.get_noise_2d(x, y) * 24.0
+	var north := clampf(1.0 - y / H, -0.3, 1.4)
+	var b := base.get_noise_2d(wx, wy)
+	var mk := clampf((north - 0.4) * 2.0, 0.0, 1.0) * 0.8 + (mask.get_noise_2d(wx, wy) * 0.5 + 0.5) * 0.6 - 0.28
+	var m := smoothstep(0.22, 0.8, mk)
+	var r := clampf(ridge.get_noise_2d(wx, wy) * 0.5 + 0.5, 0.0, 1.0)
+	return maxf(2.6 + b * 2.8 + north * 2.5 + m * (4.0 + pow(r, 1.7) * 30.0), 0.8)
 
 
 func _push(key: float, value: int) -> void:

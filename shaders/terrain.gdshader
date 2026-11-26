@@ -64,9 +64,9 @@ void fragment() {
 	bw /= (bw.x + bw.y + bw.z);
 	float r1 = tri(wpos, bw, 0.33);
 	float r2 = tri(wpos, bw, 1.7);
-	float strata = texture(noise_tex, vec2(wpos.y * 0.5 + n_big * 0.9, (wpos.x + wpos.z) * 0.035)).r;
+	float strata = texture(noise_tex, vec2(wpos.y * 0.2 + n_big * 1.6 + n_mid * 0.5, (wpos.x + wpos.z) * 0.02)).r;
 	vec3 grey = mix(vec3(0.15, 0.14, 0.13), vec3(0.045, 0.045, 0.05), r1);
-	grey = mix(grey, vec3(0.19, 0.15, 0.11), smoothstep(0.52, 0.8, strata) * 0.55);
+	grey = mix(grey, vec3(0.17, 0.145, 0.115), smoothstep(0.5, 0.85, strata) * 0.3);
 	grey = mix(grey, vec3(0.09, 0.105, 0.05), smoothstep(0.68, 0.9, n_mid) * 0.3);
 	vec3 red = mix(vec3(0.33, 0.1, 0.04), vec3(0.15, 0.04, 0.02), r1);
 	red = mix(red, vec3(0.42, 0.2, 0.1), smoothstep(0.5, 0.8, strata) * 0.6);

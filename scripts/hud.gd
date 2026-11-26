@@ -8,8 +8,11 @@ signal overlay_selected(mode: String)
 signal jump_to(tile: Vector2i)
 signal menu_action(what: String)
 
-const INK := Color("e9eef0")
-const CREAM := Color("12171b")
+const INK := Color("f2f6f8")
+const PANEL := Color("1c2e3b")
+const ACCENT := Color("6fd3ff")
+const MONEY := Color("9be36a")
+const CREAM := Color("1c2e3b")
 const GREEN := Color("7fd18b")
 const KIND_COLORS := {"good": Color("7fd18b"), "warn": Color("f2b84b"), "bad": Color("ff6b5e"), "info": Color("6bb6ff")}
 
@@ -67,9 +70,13 @@ class ToolButton extends Button:
 	var cost_text := ""
 	var label_text := ""
 	var locked := false
+	var compact := false # icon only, for the category bar
 	func _draw() -> void:
 		var s := minf(size.x - 30.0, size.y - 44.0)
 		var r := Rect2(Vector2((size.x - s) * 0.5, 7.0), Vector2(s, s))
+		if compact:
+			s = minf(size.x, size.y) - 14.0
+			r = Rect2((size - Vector2(s, s)) * 0.5, Vector2(s, s))
 		draw_rect(Rect2(r.position - Vector2(5, 3), r.size + Vector2(10, 7)), Color(0.86, 0.9, 0.86, 0.9))
 		Art.structure(self, tool, r)
 		var f := get_theme_default_font()
@@ -86,6 +93,7 @@ var root: Control
 var current_tool = null
 var view_tile := Vector2i.ZERO
 var quality_box: OptionButton
+var tray_title: Label
 var panel_id := ""
 var stat := {}
 var speed_buttons: Array[Button] = []
@@ -139,23 +147,23 @@ func _make_theme() -> Theme:
 	var th := Theme.new()
 	th.default_font = font
 	th.default_font_size = 14
-	var panel := _sb(Color(CREAM, 0.88), 8, Color(1, 1, 1, 0.1), 1, 10.0)
+	var panel := _sb(Color(CREAM, 0.93), 10, Color(ACCENT, 0.45), 1, 10.0)
 	panel.shadow_color = Color(0, 0, 0, 0.18)
 	panel.shadow_size = 5
 	panel.shadow_offset = Vector2(0, 2)
 	th.set_stylebox("panel", "PanelContainer", panel)
 	th.set_color("font_color", "Label", INK)
-	th.set_stylebox("normal", "Button", _sb(Color(1, 1, 1, 0.07), 5, Color(1, 1, 1, 0.12), 1, 6.0))
-	th.set_stylebox("hover", "Button", _sb(Color(1, 1, 1, 0.15), 5, Color(1, 1, 1, 0.25), 1, 6.0))
-	th.set_stylebox("pressed", "Button", _sb(Color(0.5, 0.82, 0.55, 0.22), 5, GREEN, 1, 6.0))
-	th.set_stylebox("disabled", "Button", _sb(Color(1, 1, 1, 0.03), 5, Color(1, 1, 1, 0.06), 1, 6.0))
+	th.set_stylebox("normal", "Button", _sb(Color("26404f"), 7, Color(ACCENT, 0.3), 1, 6.0))
+	th.set_stylebox("hover", "Button", _sb(Color("2d4a5c"), 7, ACCENT, 1, 6.0))
+	th.set_stylebox("pressed", "Button", _sb(Color("2f86ad"), 7, Color.WHITE, 1, 6.0))
+	th.set_stylebox("disabled", "Button", _sb(Color("22323d"), 7, Color(1, 1, 1, 0.08), 1, 6.0))
 	th.set_stylebox("focus", "Button", StyleBoxEmpty.new())
 	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color", "font_hover_pressed_color"]:
 		th.set_color(c, "Button", INK)
 	th.set_color("font_disabled_color", "Button", Color("5a666d"))
 	th.set_stylebox("background", "ProgressBar", _sb(Color(1, 1, 1, 0.1), 3, Color.TRANSPARENT, 0, 0.0))
 	th.set_stylebox("fill", "ProgressBar", _sb(GREEN, 6, Color.TRANSPARENT, 0, 0.0))
-	var tip := _sb(Color("0b0e10"), 6, Color(1, 1, 1, 0.18), 1, 8.0)
+	var tip := _sb(Color("14222c"), 8, Color(ACCENT, 0.6), 1, 8.0)
 	th.set_stylebox("panel", "TooltipPanel", tip)
 	th.set_color("font_color", "TooltipLabel", Color("e9eef0"))
 	th.set_font_size("font_size", "TooltipLabel", 14)
@@ -223,74 +231,91 @@ func _chip(parent: Control, key: String, glyph: String, tip: String, minw: float
 	stat[key] = l
 
 
-func _build_top() -> void:
-	var bar := PanelContainer.new()
-	bar.set_anchors_preset(Control.PRESET_TOP_WIDE)
-	bar.offset_left = 0
-	bar.offset_right = 0
-	bar.offset_top = 0
-	bar.add_theme_stylebox_override("panel", _sb(Color(CREAM, 0.92), 0, Color.TRANSPARENT, 0, 8.0))
-	root.add_child(bar)
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 16)
-	bar.add_child(h)
-	_chip(h, "money", "coin", "Park funds", 78)
-	_chip(h, "date", "clock", "Season, day and time. A year has four 6-day seasons; summer is busiest.", 200)
-	_chip(h, "visitors", "people", "Visitors in the park right now", 34)
-	_chip(h, "stars", "star", "Visitor rating (out of 5). Better ratings bring more visitors.", 30)
-	_chip(h, "eco", "leaf", "Ecosystem health, as far as your researchers can tell. Shows ? until ecologists have surveyed the park.", 44)
-	_chip(h, "weather", "sun", "Weather where you are looking. Each part of the park has its own.", 118)
-	_chip(h, "safety", "shield", "Visitor safety record", 44)
-	_chip(h, "research", "flask", "Research points to spend on new techniques", 30)
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	h.add_child(spacer)
-	var labels := ["II", ">", ">>", ">>>"]
-	var speeds := [0, 1, 2, 4]
-	for i in 4:
-		var b := _button(labels[i], func(): set_speed(speeds[i]), ["Pause (Space)", "Normal speed (1)", "Fast (2)", "Very fast (3)"][i])
-		b.toggle_mode = true
-		b.custom_minimum_size = Vector2(40, 0)
-		b.set_meta("speed", speeds[i])
-		h.add_child(b)
-		speed_buttons.append(b)
+## A round icon button, like the info-view buttons in city builders.
+func _round_button(glyph: String, tip: String, cb: Callable, size: float = 42.0) -> Button:
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.tooltip_text = tip
+	b.custom_minimum_size = Vector2(size, size)
+	var r := int(size / 2.0)
+	b.add_theme_stylebox_override("normal", _sb(Color(PANEL, 0.94), r, Color(ACCENT, 0.55), 2, 0.0))
+	b.add_theme_stylebox_override("hover", _sb(Color("2d4a5c"), r, ACCENT, 2, 0.0))
+	b.add_theme_stylebox_override("pressed", _sb(Color("2f86ad"), r, Color.WHITE, 2, 0.0))
+	b.pressed.connect(cb)
+	if glyph.length() <= 2:
+		b.text = glyph
+		b.add_theme_font_size_override("font_size", 20)
+	else:
+		var gl := Glyph.new(glyph, size * 0.5)
+		gl.position = Vector2(size * 0.25, size * 0.25)
+		gl.size = Vector2(size * 0.5, size * 0.5)
+		b.add_child(gl)
+	return b
 
-	var menu_bg := PanelContainer.new()
-	menu_bg.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	menu_bg.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	menu_bg.offset_top = 48
-	menu_bg.offset_right = -8
-	menu_bg.add_theme_stylebox_override("panel", _sb(Color(CREAM, 0.88), 8, Color(1, 1, 1, 0.1), 1, 5.0))
-	root.add_child(menu_bg)
-	var menu := HBoxContainer.new()
-	menu.add_theme_constant_override("separation", 4)
-	menu_bg.add_child(menu)
-	for id in ["Park", "Wildlife", "Staff", "Research", "Grants", "Finances"]:
-		menu.add_child(_button(id, func(): toggle_panel(id)))
-	menu.add_child(_button("Save", func(): menu_action.emit("save"), "Save the park (it also saves by itself every morning)"))
-	menu.add_child(_button("Menu", func(): menu_action.emit("menu"), "Save and return to the main menu"))
-	menu.add_child(_button(" + ", func(): menu_action.emit("zoom_in"), "Zoom in (scroll, pinch, or the + key)"))
-	menu.add_child(_button(" - ", func(): menu_action.emit("zoom_out"), "Zoom out (scroll, pinch, or the - key)"))
-	quality_box = OptionButton.new()
-	quality_box.focus_mode = Control.FOCUS_NONE
-	quality_box.tooltip_text = "Graphics quality. Choose Fast if the game feels laggy."
-	for name in ["Graphics: Fast", "Graphics: Balanced", "Graphics: Best"]:
-		quality_box.add_item(name)
-	quality_box.item_selected.connect(func(i): menu_action.emit("quality%d" % i))
-	menu.add_child(quality_box)
-	var ov := OptionButton.new()
-	ov.focus_mode = Control.FOCUS_NONE
-	ov.tooltip_text = "Map overlay"
-	for name in ["View: Normal", "View: Habitat", "View: Scenery", "View: Disturbance"]:
-		ov.add_item(name)
-	ov.item_selected.connect(func(i): overlay_selected.emit(["", "habitat", "scenery", "disturb"][i]))
-	ov.add_theme_stylebox_override("normal", _sb(Color(1, 1, 1, 0.07), 5, Color(1, 1, 1, 0.12), 1, 6.0))
-	ov.add_theme_stylebox_override("hover", _sb(Color(1, 1, 1, 0.15), 5, Color(1, 1, 1, 0.25), 1, 6.0))
-	ov.add_theme_stylebox_override("pressed", _sb(Color(1, 1, 1, 0.15), 5, Color(1, 1, 1, 0.25), 1, 6.0))
-	ov.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+
+func _dropdown(items: Array, tip: String, cb: Callable) -> OptionButton:
+	var ob := OptionButton.new()
+	ob.focus_mode = Control.FOCUS_NONE
+	ob.tooltip_text = tip
+	for name in items:
+		ob.add_item(name)
+	ob.item_selected.connect(cb)
+	ob.add_theme_stylebox_override("normal", _sb(Color("26404f"), 14, Color(ACCENT, 0.4), 1, 7.0))
+	ob.add_theme_stylebox_override("hover", _sb(Color("2d4a5c"), 14, ACCENT, 1, 7.0))
+	ob.add_theme_stylebox_override("pressed", _sb(Color("2d4a5c"), 14, ACCENT, 1, 7.0))
+	ob.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
-		ov.add_theme_color_override(c, INK)
-	menu.add_child(ov)
+		ob.add_theme_color_override(c, INK)
+	return ob
+
+
+## Top of the screen: park-health readouts on the left, management buttons
+## down the left edge, view and system controls on the right.
+func _build_top() -> void:
+	var info := PanelContainer.new()
+	info.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	info.offset_left = 8
+	info.offset_top = 8
+	info.add_theme_stylebox_override("panel", _sb(Color(PANEL, 0.92), 18, Color(ACCENT, 0.4), 1, 7.0))
+	root.add_child(info)
+	var ih := HBoxContainer.new()
+	ih.add_theme_constant_override("separation", 14)
+	info.add_child(ih)
+	_chip(ih, "eco", "leaf", "Ecosystem health, as far as your researchers can tell. Shows ? until ecologists have surveyed the park.", 40)
+	_chip(ih, "safety", "shield", "Visitor safety record", 40)
+	_chip(ih, "research", "flask", "Research points to spend on new techniques", 28)
+	_chip(ih, "weather", "sun", "Weather where you are looking. Each part of the park has its own.", 112)
+
+	var rail := VBoxContainer.new()
+	rail.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	rail.offset_left = 8
+	rail.offset_top = 58
+	rail.add_theme_constant_override("separation", 6)
+	root.add_child(rail)
+	var panels := [["Park", "star", "Park overview and what visitors are saying"], ["Wildlife", "leaf", "Wildlife, weather and what your researchers know"],
+		["Staff", "people", "Hire and manage staff"], ["Research", "flask", "Research and discoveries"],
+		["Grants", "check", "Grants"], ["Finances", "coin", "Entry fee, income and costs"]]
+	for p in panels:
+		var id: String = p[0]
+		rail.add_child(_round_button(p[1], "%s: %s" % [id, p[2]], func(): toggle_panel(id)))
+
+	var sys := HBoxContainer.new()
+	sys.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	sys.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	sys.offset_top = 8
+	sys.offset_right = -8
+	sys.add_theme_constant_override("separation", 6)
+	root.add_child(sys)
+	sys.add_child(_dropdown(["View: Normal", "View: Habitat", "View: Scenery", "View: Disturbance"], "Info views",
+		func(i): overlay_selected.emit(["", "habitat", "scenery", "disturb"][i])))
+	quality_box = _dropdown(["Graphics: Fast", "Graphics: Balanced", "Graphics: Best"], "Graphics quality. Choose Fast if the game feels laggy.",
+		func(i): menu_action.emit("quality%d" % i))
+	sys.add_child(quality_box)
+	sys.add_child(_round_button("+", "Zoom in (scroll, pinch, or the + key)", func(): menu_action.emit("zoom_in"), 36.0))
+	sys.add_child(_round_button("-", "Zoom out (scroll, pinch, or the - key)", func(): menu_action.emit("zoom_out"), 36.0))
+	var save := _button("Save", func(): menu_action.emit("save"), "Save the park (it also saves by itself every morning)")
+	sys.add_child(save)
+	sys.add_child(_button("Menu", func(): menu_action.emit("menu"), "Save and return to the main menu"))
 
 
 func set_quality(level: int) -> void:
@@ -305,48 +330,108 @@ func set_speed(s: int) -> void:
 
 # ------------------------------------------------------------------ toolbar
 
+## Bottom of the screen: one bar with time controls on the left, build
+## categories in the middle and the park's vital numbers on the right. The
+## tools of the chosen category open in a tray just above it.
 func _build_toolbar() -> void:
 	var wrap := VBoxContainer.new()
 	wrap.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	wrap.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	wrap.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	wrap.offset_bottom = -6
+	wrap.offset_bottom = -62
 	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	wrap.add_theme_constant_override("separation", 4)
 	root.add_child(wrap)
-
 	hint_label = _label("", 14, Color.WHITE)
 	hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	hint_label.add_theme_color_override("font_outline_color", Color(0.1, 0.2, 0.12, 0.9))
+	hint_label.add_theme_color_override("font_outline_color", Color(0.05, 0.1, 0.14, 0.9))
 	hint_label.add_theme_constant_override("outline_size", 6)
 	hint_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	wrap.add_child(hint_label)
-
-	var bar := PanelContainer.new()
-	bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	wrap.add_child(bar)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 6)
-	bar.add_child(v)
-	var cats := HBoxContainer.new()
-	cats.alignment = BoxContainer.ALIGNMENT_CENTER
-	cats.add_theme_constant_override("separation", 4)
-	v.add_child(cats)
-	for i in D.CATEGORIES.size():
-		var b := _button(D.CATEGORIES[i].name, func(): _show_category(i))
-		b.toggle_mode = true
-		b.add_theme_font_size_override("font_size", 14)
-		cats.add_child(b)
-		cat_buttons.append(b)
+	var tray := PanelContainer.new()
+	tray.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	tray.add_theme_stylebox_override("panel", _sb(Color(PANEL, 0.94), 10, Color(ACCENT, 0.45), 1, 8.0))
+	wrap.add_child(tray)
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 4)
+	tray.add_child(tv)
+	tray_title = _label("", 13, ACCENT)
+	tv.add_child(tray_title)
 	tool_row = HBoxContainer.new()
 	tool_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	tool_row.add_theme_constant_override("separation", 6)
-	tool_row.custom_minimum_size = Vector2(450, 86)
-	v.add_child(tool_row)
+	tool_row.custom_minimum_size = Vector2(320, 86)
+	tv.add_child(tool_row)
+
+	var bar := PanelContainer.new()
+	bar.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	bar.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	var style := _sb(Color(PANEL, 0.96), 0, Color.TRANSPARENT, 0, 6.0)
+	style.border_width_top = 2
+	style.border_color = Color(ACCENT, 0.7)
+	bar.add_theme_stylebox_override("panel", style)
+	root.add_child(bar)
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", 10)
+	bar.add_child(h)
+
+	# time
+	var labels := ["II", ">", ">>", ">>>"]
+	var speeds := [0, 1, 2, 4]
+	for i in 4:
+		var b := _button(labels[i], func(): set_speed(speeds[i]), ["Pause (Space)", "Normal speed (1)", "Fast (2)", "Very fast (3)"][i])
+		b.toggle_mode = true
+		b.custom_minimum_size = Vector2(38, 38)
+		b.set_meta("speed", speeds[i])
+		h.add_child(b)
+		speed_buttons.append(b)
+	var date := _label("", 15)
+	date.custom_minimum_size.x = 196
+	date.tooltip_text = "Season, day and time. A year has four 6-day seasons; summer is busiest."
+	date.mouse_filter = Control.MOUSE_FILTER_PASS
+	h.add_child(date)
+	stat["date"] = date
+
+	var left_gap := Control.new()
+	left_gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(left_gap)
+	# build categories
+	for i in D.CATEGORIES.size():
+		var b := ToolButton.new()
+		b.tool = D.CATEGORIES[i].tools[0]
+		b.compact = true
+		b.toggle_mode = true
+		b.focus_mode = Control.FOCUS_NONE
+		b.custom_minimum_size = Vector2(52, 44)
+		b.tooltip_text = D.CATEGORIES[i].name
+		b.pressed.connect(func(): _show_category(i))
+		h.add_child(b)
+		cat_buttons.append(b)
+	var right_gap := Control.new()
+	right_gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	h.add_child(right_gap)
+
+	# vital numbers
+	_chip(h, "visitors", "people", "Visitors in the park right now", 36)
+	_chip(h, "stars", "star", "Visitor rating (out of 5). Better ratings bring more visitors.", 30)
+	var money_box := VBoxContainer.new()
+	money_box.add_theme_constant_override("separation", -3)
+	money_box.custom_minimum_size.x = 120
+	money_box.tooltip_text = "Park funds, and today's income minus costs so far"
+	var money := _label("", 20, MONEY)
+	money.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	money_box.add_child(money)
+	var net := _label("", 12, Color("a3afb6"))
+	net.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	money_box.add_child(net)
+	h.add_child(money_box)
+	stat["money"] = money
+	stat["net"] = net
 
 
 func _show_category(i: int) -> void:
 	cat_index = i
+	tray_title.text = D.CATEGORIES[i].name
 	for k in cat_buttons.size():
 		cat_buttons[k].set_pressed_no_signal(k == i)
 	for c in tool_row.get_children():
@@ -395,8 +480,8 @@ func _build_side() -> void:
 	side.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	side.offset_left = -348
 	side.offset_right = -8
-	side.offset_top = 98
-	side.offset_bottom = -150
+	side.offset_top = 54
+	side.offset_bottom = -64
 	side.visible = false
 	root.add_child(side)
 	var v := VBoxContainer.new()
@@ -433,7 +518,7 @@ func toggle_panel(id: String) -> void:
 
 
 func _head(text: String) -> void:
-	side_body.add_child(_label(text, 16, Color("f2c879")))
+	side_body.add_child(_label(text, 16, ACCENT))
 
 
 func _kv(k: String, v: String, col: Color = INK) -> void:
@@ -732,7 +817,7 @@ func _build_misc() -> void:
 	toasts.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	toasts.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	toasts.offset_left = 8
-	toasts.offset_bottom = -8
+	toasts.offset_bottom = -64
 	toasts.custom_minimum_size.x = 330
 	toasts.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	toasts.add_theme_constant_override("separation", 4)
@@ -740,8 +825,8 @@ func _build_misc() -> void:
 
 	objectives = PanelContainer.new()
 	objectives.set_anchors_preset(Control.PRESET_TOP_LEFT)
-	objectives.offset_left = 8
-	objectives.offset_top = 48
+	objectives.offset_left = 62
+	objectives.offset_top = 58
 	objectives.custom_minimum_size.x = 300
 	root.add_child(objectives)
 	obj_box = VBoxContainer.new()
@@ -773,7 +858,7 @@ func set_inspector(text: String) -> void:
 
 func _place_inspector() -> void:
 	inspector.size = inspector.get_combined_minimum_size()
-	inspector.position = root.size - inspector.size - Vector2(8, 8)
+	inspector.position = root.size - inspector.size - Vector2(8, 64)
 
 
 func _on_toast(text: String, kind: String, tile: Vector2i) -> void:
@@ -852,7 +937,12 @@ func _update_objectives() -> void:
 func _update_stats() -> void:
 	var g := game
 	stat.money.text = D.money(g.money)
-	stat.money.add_theme_color_override("font_color", INK if g.money >= 0 else Color("ff6b5e"))
+	stat.money.add_theme_color_override("font_color", MONEY if g.money >= 0 else Color("ff6b5e"))
+	var net := 0.0
+	for k in g.ledger:
+		net += g.ledger[k]
+	stat.net.text = ("+" if net >= 0 else "-") + D.money(absf(net)) + " today"
+	stat.net.add_theme_color_override("font_color", Color("a3afb6") if net >= 0 else Color("ff8a70"))
 	stat.date.text = g.date_text()
 	stat.visitors.text = str(g.visitors.people_count())
 	stat.stars.text = "%.1f" % g.stars

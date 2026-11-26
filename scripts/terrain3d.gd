@@ -11,7 +11,8 @@ const SUB := 3 # terrain vertices per tile edge
 const REG := 20 # tiles per vegetation region
 const PX := 12 # path-mask pixels per tile
 const DECK := 0.16 # height of bridges and boardwalks above the water
-const BORDER := 110 # tiles of scenery beyond the playable map
+const BORDER := 90 # tiles of scenery beyond the playable map
+const OSTEP := 1 # grid spacing of that scenery
 const GW := World.W * SUB + 1
 const GH := World.H * SUB + 1
 const LIT := [D.B.VISITOR_CENTER, D.B.RANGER, D.B.RESEARCH, D.B.SNACK, D.B.CAMP, D.B.GATE, D.B.RESTROOM]
@@ -169,8 +170,9 @@ func setup(w: World, f: Font) -> void:
 		"rock": _ext("rock", Models.rock(), 0.3), "flower": Models.flower(), "bush": _ext("bush", Models.bush(), 0.2), "reed": Models.reed(), "grass": Models.grass_tuft(),
 		"flame": Models.flame(), "litter": Models.litter(), "thistle": Models.thistle(), "milfoil": Models.milfoil(), "orchid": Models.orchid()}
 	# baked cut-out trees (models/impostors) take priority: they look detailed and cost almost nothing
-	var cone := [[0.2, 1.0], [0.36, 0.86], [0.52, 0.68], [0.68, 0.48], [0.83, 0.28]]
-	var crown := [[0.5, 0.7], [0.62, 0.95], [0.74, 1.0], [0.86, 0.72]]
+	# one or two canopy layers are enough to close the tree from above without looking stacked
+	var cone := [[0.28, 0.92], [0.58, 0.55]]
+	var crown := [[0.72, 0.96]]
 	for pair in [["conifer", "spruce", 2.0, cone], ["conifer2", "pine", 2.15, crown], ["leaf", "aspen", 1.5, crown], ["conifer_far", "spruce", 2.0, cone]]:
 		var card := Models.card_tree(pair[1], pair[2], pair[3])
 		if card != null:
@@ -347,7 +349,7 @@ func _compute_heights() -> void:
 			var h := _cr(tmp[r0 + gx], tmp[r1 + gx], tmp[r2 + gx], tmp[r3 + gx], t)
 			if h > 9.0:
 				# craggy detail on high ground
-				h += detail.get_noise_2d(gx * inv * 2.2, gy * inv * 2.2) * clampf((h - 9.0) * 0.12, 0.0, 2.2)
+				h += detail.get_noise_2d(gx * inv * 2.2, gy * inv * 2.2) * clampf((h - 9.0) * 0.12, 0.0, 1.0)
 			hf[gy * GW + gx] = h
 
 
@@ -627,17 +629,17 @@ func _outer_height(x: int, y: int) -> float:
 	var d := Vector2(x - cxp, y - cyp).length()
 	if d <= 0.0:
 		return inner - 0.2
-	# beyond the edge the land carries on from wherever the park left off,
-	# rolling at first and rising into distant hills
-	var g := inner + detail.get_noise_2d(x * 0.35, y * 0.35) * minf(d * 0.3, 6.0) \
-		+ world.noise.get_noise_2d(x * 2.0, y * 2.0) * minf(d * 0.2, 9.0) + maxf(0.0, d - 14.0) * 0.12
+	# beyond the edge the land follows the same ranges and valleys as the park
+	var g := world.gen.relief(x, y)
+	if g > 9.0:
+		g += detail.get_noise_2d(x * 2.2, y * 2.2) * clampf((g - 9.0) * 0.12, 0.0, 1.0)
 	if y > World.H:
-		g = lerpf(g, inner, 0.6) # gentler country toward the highway
-	return maxf(lerpf(inner, g, smoothstep(0.0, 10.0, d)), 0.3)
+		g = lerpf(g, clampf(g, 1.0, 5.0), 0.7) # gentler country toward the highway
+	return maxf(lerpf(inner, g, smoothstep(0.0, 14.0, d)), 0.3)
 
 
 func _outskirts_mesh() -> ArrayMesh:
-	var step := 2
+	var step := OSTEP
 	var x0 := -BORDER
 	var y0 := -BORDER
 	var cols := (World.W + BORDER * 2) / step + 1
@@ -666,9 +668,10 @@ func _outskirts_mesh() -> ArrayMesh:
 			var jit := D.hash2(x, y, 4)
 			var dist := maxf(maxf(-x, x - World.W), maxf(-y, y - World.H))
 			var approach: bool = y > World.H - 4 and absf(x - world.entry.x) < 16.0 # keep the entrance open
-			if not inside and not approach and dist < 60.0 and h > 0.3 and h < 7.0 and nrm.y > 0.82 and jit < 0.75:
-				for k2 in 3:
-					_outer_trees.append(Vector3(x + D.hash2(x, y, 9 + k2) * 2.0, 0, y + D.hash2(x, y, 19 + k2) * 2.0))
+			# forest beyond the boundary, in the same patchy pattern as inside
+			var patch := detail.get_noise_2d(x * 0.5 + 300.0, y * 0.5) * 0.5 + 0.5
+			if not inside and not approach and dist < 70.0 and h > 0.3 and h < 10.5 and nrm.y > 0.8 and jit < patch * 1.1 - 0.15:
+				_outer_trees.append(Vector3(x + D.hash2(x, y, 9) * 1.0, 0, y + D.hash2(x, y, 19) * 1.0))
 	for r in rows - 1:
 		for c in cols - 1:
 			var x := x0 + c * step
@@ -683,8 +686,8 @@ func _outskirts_mesh() -> ArrayMesh:
 
 ## Height of the outskirts mesh at a point (for the highway and far trees).
 func outer_at(x: float, z: float) -> float:
-	var fx := clampf((x + BORDER) * 0.5, 0.0, _ocols - 1.001)
-	var fz := clampf((z + BORDER) * 0.5, 0.0, _ohs.size() / _ocols - 1.001)
+	var fx := clampf((x + BORDER) / float(OSTEP), 0.0, _ocols - 1.001)
+	var fz := clampf((z + BORDER) / float(OSTEP), 0.0, _ohs.size() / _ocols - 1.001)
 	var gx := int(fx)
 	var gz := int(fz)
 	var u := fx - gx
@@ -935,7 +938,7 @@ func _fill(mm: MultiMesh, xforms: Array, colors: Array) -> void:
 		if _cards.has(mm.mesh):
 			# cut-outs carry their own colours: only a gentle per-tree and seasonal tint
 			var peak := maxf(maxf(col.r, col.g), maxf(col.b, 0.001))
-			col = Color.WHITE.lerp(Color(col.r / peak, col.g / peak, col.b / peak), 0.3) * (0.5 if mm.mesh == _meshes["leaf"] else 0.78)
+			col = Color.WHITE.lerp(Color(col.r / peak, col.g / peak, col.b / peak), 0.3) * 0.8
 			if season == 3:
 				col = col.lerp(Color(1.5, 1.6, 1.75), 0.45)
 		mm.set_instance_color(i, Color.WHITE if supplied else col)
@@ -1036,8 +1039,8 @@ func _rebuild_region(key: Vector2i) -> void:
 						if is_card and season == 2:
 							col = Color(1.0, 0.72, 0.2)
 						out.leaf[1].append(col)
-			elif t == D.T.ROCK and bio != D.BIOME.DESERT and h < 0.3:
-				out.rock[0].append(_xf(x + h2, y + h * 3.0, 0.8 + h2 * 2.2, h * TAU, 0.05))
+			elif t == D.T.ROCK and bio != D.BIOME.DESERT and h < 0.1:
+				out.rock[0].append(_xf(x + h2, y + h * 9.0, 0.5 + h2 * 1.3, h * TAU, 0.06))
 				out.rock[1].append(Color.WHITE.darkened(h2 * 0.25))
 			elif bio == D.BIOME.DESERT and (t == D.T.GRASS or t == D.T.SAND):
 				var n := 3 if t == D.T.GRASS else (1 if h < 0.35 else 0)
@@ -1059,8 +1062,8 @@ func _rebuild_region(key: Vector2i) -> void:
 				if h2 < 0.22:
 					out.bush[0].append(_xf(x + h, y + h2 * 4.0, 0.5 + h * 0.6, h * 9.0))
 					out.bush[1].append(Color("3f6a34").lerp(Color("5f8a3f"), h) if season != 3 else Color("9aa39c"))
-				if bio == D.BIOME.ALPINE and h < 0.12:
-					out.rock[0].append(_xf(x + h2, y + h * 6.0, 0.6 + h2 * 1.6, h * TAU, 0.05))
+				if bio == D.BIOME.ALPINE and h < 0.05:
+					out.rock[0].append(_xf(x + h2, y + h * 18.0, 0.4 + h2 * 1.0, h * TAU, 0.06))
 					out.rock[1].append(Color.WHITE.darkened(h2 * 0.2))
 	var mms: Dictionary = _regions[key]
 	for name in VEG:
@@ -1211,32 +1214,40 @@ func _sync_structures() -> void:
 
 
 func _build_landmarks() -> void:
+	# target width (in tiles) for each landmark model, and how high its name floats
+	var spec := {"falls": [3.0, 5.5], "spring": [2.6, 2.2], "arch": [3.6, 5.0], "summit": [0.9, 2.4], "grove": [0.0, 9.5], "lake": [0.0, 1.5]}
 	for lm in world.landmarks:
 		var t: Vector2i = lm.tile
 		var pos := Vector3(t.x + 0.5, top_at(t.x + 0.5, t.y + 0.5), t.y + 0.5)
-		var mi := MeshInstance3D.new()
-		mi.mesh = Models.landmark(lm.kind)
-		mi.material_override = mat
-		mi.position = pos
-		var lift := 3.0
-		match lm.kind:
-			"grove":
-				mi.scale = Vector3.ONE * 3.2
-				lift = 11.0
-			"falls":
-				mi.scale = Vector3.ONE * 2.2
-				lift = 5.0
-			"spring":
-				mi.scale = Vector3.ONE * 1.8
-			"arch":
-				mi.scale = Vector3.ONE * 2.6
-				lift = 7.5
-			"summit":
+		var info: Array = spec.get(lm.kind, [1.0, 3.0])
+		if lm.kind == "grove":
+			# a stand of giant old trees
+			for k in 7:
+				var a := k * 0.9
+				var r := 0.0 if k == 0 else 0.9 + (k % 3) * 0.5
+				var tp := Vector3(pos.x + cos(a) * r, 0, pos.z + sin(a) * r)
+				tp.y = height_at(tp.x, tp.z) - 0.1
+				var tree := MeshInstance3D.new()
+				tree.mesh = _meshes["conifer2" if k % 2 == 1 else "conifer"]
+				if not _cards.has(tree.mesh) and not _external.has(tree.mesh):
+					tree.material_override = mat
+				tree.position = tp
+				tree.rotation.y = k * 1.7
+				tree.scale = Vector3.ONE * (3.6 - (k % 3) * 0.5)
+				add_child(tree)
+		elif lm.kind != "lake":
+			var mi := MeshInstance3D.new()
+			var ext := Models.external("lm_" + str(lm.kind))
+			if ext != null:
+				mi.mesh = ext
+				mi.transform = Models.fit(ext, info[0], true)
+				mi.position += pos - Vector3(0, 0.12, 0)
+			else:
+				mi.mesh = Models.landmark(lm.kind)
+				mi.material_override = mat
+				mi.position = pos
 				mi.scale = Vector3.ONE * 2.0
-				lift = 3.5
-			"lake":
-				lift = 1.5
-		add_child(mi)
+			add_child(mi)
 		var label := _label(lm.name, 19)
-		label.position = pos + Vector3(0, lift, 0)
+		label.position = pos + Vector3(0, info[1], 0)
 		add_child(label)

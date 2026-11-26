@@ -184,8 +184,8 @@ static func rock() -> ArrayMesh:
 	if _cache.has("rock"):
 		return _cache["rock"]
 	var m := MeshBuilder.new()
-	m.blob(V(0, 0.07, 0), V(0.24, 0.17, 0.19), Color("8d877d"), 5)
-	m.blob(V(0.16, 0.04, 0.1), V(0.13, 0.1, 0.12), Color("7f796f"), 5)
+	m.blob_smooth(V(0, 0.06, 0), V(0.24, 0.15, 0.19), Color("7a756d"), 7, 4)
+	m.blob_smooth(V(0.15, 0.03, 0.09), V(0.13, 0.09, 0.12), Color("6d6861"), 6, 4)
 	_cache["rock"] = m.commit()
 	return _cache["rock"]
 
@@ -291,8 +291,8 @@ static func card_tree(name: String, height: float, layers: Array) -> ArrayMesh:
 				var uv := PackedVector2Array()
 				var idx := PackedInt32Array()
 				if pass_i == 0:
-					for k in 3:
-						var a := k * PI / 3.0
+					for k in 4:
+						var a := k * PI / 4.0
 						var dir := Vector3(cos(a), 0, sin(a))
 						var nrm := Vector3.UP # lit like the canopy as a whole, from either side
 						var b := v.size()
