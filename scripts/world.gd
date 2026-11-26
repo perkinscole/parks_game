@@ -253,6 +253,14 @@ func _place_entry() -> void:
 				var t := terrain[i]
 				if (t == D.T.GRASS or t == D.T.MEADOW or t == D.T.FOREST or t == D.T.SAND) and biome[i] != D.BIOME.WETLAND:
 					ok += 1.0
+		# prefer level ground for the first road
+		var lo := 1e9
+		var hi := -1e9
+		for y in range(H - 14, H):
+			for dx in range(-4, 5):
+				lo = minf(lo, height[idx(x + dx, y)])
+				hi = maxf(hi, height[idx(x + dx, y)])
+		ok -= (hi - lo) * 14.0
 		ok -= abs(x - W / 2) * 0.4
 		if ok > best_score:
 			best_score = ok

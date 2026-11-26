@@ -534,15 +534,13 @@ func _outer_height(x: int, y: int) -> float:
 	var d := Vector2(x - cxp, y - cyp).length()
 	if d <= 0.0:
 		return inner - 0.2
-	var e := world.raw_elev(x, y)
-	var g := -0.8
-	if e > 0.70: g = 8.6 + (e - 0.70) * 150.0
-	elif e > 0.62: g = 3.0 + (e - 0.62) * 70.0
-	elif e > 0.30: g = 0.35 + (e - 0.31) * 9.0
-	g += maxf(0.0, d - 8.0) * 0.14 + detail.get_noise_2d(x * 1.3, y * 1.3) * clampf(g * 0.2, 0.0, 3.0)
+	# beyond the edge the land carries on from wherever the park left off,
+	# rolling at first and rising into distant hills
+	var g := inner + detail.get_noise_2d(x * 0.35, y * 0.35) * minf(d * 0.3, 6.0) \
+		+ world.noise.get_noise_2d(x * 2.0, y * 2.0) * minf(d * 0.2, 9.0) + maxf(0.0, d - 14.0) * 0.12
 	if y > World.H:
-		g = lerpf(g, clampf(g, 0.3, 2.0), 0.7) # gentler country toward the highway
-	return lerpf(inner, g, smoothstep(0.0, 12.0, d))
+		g = lerpf(g, inner, 0.6) # gentler country toward the highway
+	return maxf(lerpf(inner, g, smoothstep(0.0, 10.0, d)), 0.3)
 
 
 func _outskirts_mesh() -> ArrayMesh:
