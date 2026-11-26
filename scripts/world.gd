@@ -21,6 +21,10 @@ var quality := PackedFloat32Array()
 var park_used := PackedByteArray()
 var rare := PackedFloat32Array() # orchid colony health
 var footfall := PackedFloat32Array()
+var fire := PackedByteArray() # hours of burning left
+var burned := PackedByteArray() # days until a burn scar recovers
+var inv_seen := PackedByteArray() # invasive patches your staff have found
+var fire_tiles := {}
 var bin_cover := PackedByteArray()
 var sign_cover := PackedByteArray()
 var rest_cover := PackedByteArray()
@@ -45,6 +49,13 @@ var defer_nav := false # set while placing many tiles at once
 var _scenic_cache := {}
 var _dist_cache := {}
 var rng := RandomNumberGenerator.new()
+var noise := FastNoiseLite.new()
+
+
+## Raw elevation noise; also defined outside the map (used for the horizon).
+func raw_elev(x: float, y: float) -> float:
+	var north := 1.0 - y / H
+	return (noise.get_noise_2d(x, y) * 0.5 + 0.5) * 0.72 + north * 0.34 - 0.03
 
 
 static func idx(x: int, y: int) -> int:
@@ -88,10 +99,13 @@ func generate(seed_val: int) -> void:
 	quality.resize(n); quality.fill(0.0)
 	rare.resize(n); rare.fill(0.0)
 	footfall.resize(n); footfall.fill(0.0)
+	fire.resize(n); fire.fill(0)
+	burned.resize(n); burned.fill(0)
+	inv_seen.resize(n); inv_seen.fill(0)
 	sid.resize(n)
 	sid.fill(0)
 
-	var n1 := FastNoiseLite.new()
+	var n1 := noise
 	n1.seed = seed_val
 	n1.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
 	n1.frequency = 0.022
@@ -142,7 +156,7 @@ func generate(seed_val: int) -> void:
 		for x in W:
 			var i := idx(x, y)
 			var h := D.hash2(x, y, 1)
-			var conifer := elev[i] > 0.5 or D.hash2(x, y, 2) < 0.25
+			var conifer := elev[i] > 0.45 or D.hash2(x, y, 2) < 0.6
 			match terrain[i]:
 				D.T.FOREST: trees[i] = 2 if conifer else 1
 				D.T.GRASS:
@@ -697,6 +711,7 @@ func set_invasive(t: Vector2i, v: float) -> void:
 		invasive_tiles[i] = true
 	else:
 		invasive_tiles.erase(i)
+		inv_seen[i] = 0
 	changed.emit(Rect2i(t, Vector2i(1, 1)))
 
 

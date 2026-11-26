@@ -12,14 +12,17 @@ var hud: HUD
 var cam: Camera3D
 var sun: DirectionalLight3D
 var env: Environment
-var sky := Gradient.new()
+var sky_mat: ProceduralSkyMaterial
+var rain: GPUParticles3D
+var snow: GPUParticles3D
+var _overcast := 0.0
 var font: Font
 
 # orbit camera
 var target := Vector3.ZERO
 var yaw := 0.0
-var pitch := 0.95
-var dist := 26.0
+var pitch := 0.5
+var dist := 30.0
 
 # overlays drawn on the terrain
 var cursor_mesh: MeshInstance3D
@@ -67,25 +70,42 @@ func _ready() -> void:
 
 	var we := WorldEnvironment.new()
 	env = Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color("9fd3f2")
+	sky_mat = ProceduralSkyMaterial.new()
+	sky_mat.sun_angle_max = 12.0
+	var sky_res := Sky.new()
+	sky_res.sky_material = sky_mat
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky_res
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color("dfeaff")
-	env.ambient_light_energy = 0.75
-	env.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+	env.tonemap_mode = Environment.TONE_MAPPER_ACES
+	env.tonemap_white = 2.2
+	env.adjustment_enabled = true
+	env.adjustment_contrast = 1.08
+	env.adjustment_saturation = 1.12
+	env.ssao_enabled = true
+	env.ssao_radius = 1.2
+	env.ssao_intensity = 1.6
+	env.glow_enabled = true
+	env.glow_intensity = 0.7
+	env.glow_bloom = 0.04
+	env.glow_hdr_threshold = 1.1
+	env.fog_enabled = true
+	env.fog_density = 0.0022
+	env.fog_aerial_perspective = 0.4
+	env.fog_sky_affect = 0.0
 	we.environment = env
 	add_child(we)
 	sun = DirectionalLight3D.new()
-	sun.rotation = Vector3(deg_to_rad(-52.0), deg_to_rad(-38.0), 0.0)
-	sun.light_energy = 1.05
 	sun.shadow_enabled = true
-	sun.shadow_opacity = 0.5
-	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
-	sun.directional_shadow_max_distance = 90.0
+	sun.shadow_opacity = 0.85
+	sun.shadow_blur = 1.2
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	sun.directional_shadow_max_distance = 130.0
+	sun.light_angular_distance = 0.6
 	add_child(sun)
-	var night := Color(0.42, 0.5, 0.82)
-	sky.offsets = PackedFloat32Array([0.0, 5.0 / 24.0, 6.0 / 24.0, 7.2 / 24.0, 18.5 / 24.0, 20.3 / 24.0, 21.8 / 24.0, 1.0])
-	sky.colors = PackedColorArray([night, night, Color(1.0, 0.8, 0.72), Color.WHITE, Color.WHITE, Color(1.0, 0.74, 0.58), night, night])
+
+	rain = _make_precip(2600, Vector2(0.025, 0.55), Color(0.75, 0.85, 1.0, 0.45), 26.0)
+	snow = _make_precip(1800, Vector2(0.04, 0.04), Color(1, 1, 1, 0.85), 3.5)
 
 	land = Terrain3D.new()
 	add_child(land)
@@ -108,9 +128,9 @@ func _ready() -> void:
 	add_child(ghost)
 
 	cam = Camera3D.new()
-	cam.fov = 38.0
-	cam.near = 0.5
-	cam.far = 400.0
+	cam.fov = 42.0
+	cam.near = 0.3
+	cam.far = 500.0
 	add_child(cam)
 	cam.make_current()
 	target = Vector3(world.entry.x + 0.5, 0.0, world.entry.y - 9.0)
@@ -121,12 +141,20 @@ func _ready() -> void:
 	hud.setup(game, font)
 	hud.set_speed(1)
 	hud.tool_selected.connect(func(t): tool = t; dragging = false)
-	hud.overlay_selected.connect(func(m): overlay_mode = m; _overlay_timer = 0.0)
+	hud.overlay_selected.connect(_set_overlay)
 	hud.jump_to.connect(func(t): target = Vector3(t.x + 0.5, 0, t.y + 0.5))
 	game.say("Welcome, Superintendent! This wild land is yours to protect and share. Follow the Getting Started list to open the park.", "good")
 	game.say("Camera: drag to move, right-drag to orbit, scroll to zoom (or WASD, Q/E). Click anything to inspect it.", "info")
 
 	_dev_hooks(args)
+
+
+func _set_overlay(m: String) -> void:
+	if (m == "habitat" or m == "disturb") and world.count_kind(D.B.RESEARCH) == 0:
+		game.say("Habitat and disturbance maps come from field research. Build a Research Station first.", "info")
+		m = ""
+	overlay_mode = m
+	_overlay_timer = 0.0
 
 
 func _flat_mesh_instance() -> MeshInstance3D:
@@ -148,12 +176,92 @@ func _flat_mesh_instance() -> MeshInstance3D:
 func _update_camera() -> void:
 	target.x = clampf(target.x, 0.0, World.W)
 	target.z = clampf(target.z, 0.0, World.H)
-	target.y = lerpf(target.y, maxf(land.height_at(target.x, target.z), 0.0), 0.2)
-	pitch = clampf(pitch, 0.3, 1.52)
-	dist = clampf(dist, 5.0, 95.0)
+	target.y = lerpf(target.y, maxf(land.height_at(target.x, target.z), 0.0), 0.12)
+	pitch = clampf(pitch, 0.16, 1.45)
+	dist = clampf(dist, 4.0, 110.0)
 	var offset := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
 	cam.position = target + offset
 	cam.look_at(target, Vector3.UP)
+
+
+func _make_precip(amount: int, size: Vector2, col: Color, speed: float) -> GPUParticles3D:
+	var p := GPUParticles3D.new()
+	p.amount = amount
+	p.lifetime = 22.0 / speed if speed > 10.0 else 5.5
+	p.preprocess = p.lifetime
+	p.visibility_aabb = AABB(Vector3(-40, -30, -40), Vector3(80, 60, 80))
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	pm.emission_box_extents = Vector3(26, 0.5, 26)
+	pm.direction = Vector3(0.12, -1, 0.05)
+	pm.spread = 2.0 if speed > 10.0 else 12.0
+	pm.initial_velocity_min = speed * 0.85
+	pm.initial_velocity_max = speed
+	pm.gravity = Vector3.ZERO
+	p.process_material = pm
+	var quad := QuadMesh.new()
+	quad.size = size
+	var qm := StandardMaterial3D.new()
+	qm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	qm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	qm.albedo_color = col
+	qm.billboard_mode = BaseMaterial3D.BILLBOARD_FIXED_Y if speed > 10.0 else BaseMaterial3D.BILLBOARD_ENABLED
+	qm.billboard_keep_scale = true
+	quad.material = qm
+	p.draw_pass_1 = quad
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	p.emitting = false
+	add_child(p)
+	return p
+
+
+func _mix(a: Color, b: Color, c: Color, day: float, glow: float) -> Color:
+	# a = night, b = golden hour, c = midday
+	return a.lerp(c, day).lerp(b, glow)
+
+
+## Moves the sun across the sky and sets the mood for the time of day.
+func _update_sky() -> void:
+	var hour := game.minutes / 60.0
+	var p := clampf((hour - 5.5) / 15.0, 0.0, 1.0) # 5:30 sunrise .. 20:30 sunset
+	var up := sin(p * PI) # sun height, 0 at the horizon
+	var day := smoothstep(0.0, 0.22, up)
+	var glow := (1.0 - smoothstep(0.1, 0.45, up)) * smoothstep(0.0, 0.08, up)
+	var night := 1.0 - day
+	if day > 0.02:
+		sun.rotation = Vector3(deg_to_rad(-(7.0 + 44.0 * up)), deg_to_rad(lerpf(105.0, -105.0, p)), 0.0)
+		sun.light_color = Color(1.0, 0.96, 0.9).lerp(Color(1.0, 0.62, 0.36), glow)
+		sun.light_energy = (1.05 + 0.5 * glow) * day * (1.0 - 0.62 * _overcast)
+	else:
+		sun.rotation = Vector3(deg_to_rad(-48.0), deg_to_rad(40.0), 0.0)
+		sun.light_color = Color(0.55, 0.66, 1.0)
+		sun.light_energy = 0.32 * smoothstep(0.98, 1.0, night) + 0.0001
+	env.ambient_light_color = _mix(Color(0.2, 0.26, 0.45), Color(0.6, 0.5, 0.55), Color(0.5, 0.6, 0.8), day, glow)
+	env.ambient_light_energy = 0.4 - 0.08 * day
+	sky_mat.sky_top_color = _mix(Color(0.02, 0.03, 0.09), Color(0.22, 0.3, 0.55), Color(0.2, 0.42, 0.78), day, glow)
+	sky_mat.sky_horizon_color = _mix(Color(0.08, 0.11, 0.22), Color(0.98, 0.62, 0.42), Color(0.68, 0.8, 0.92), day, glow)
+	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color
+	sky_mat.ground_bottom_color = sky_mat.sky_horizon_color.darkened(0.3)
+	env.fog_light_color = sky_mat.sky_horizon_color.lerp(Color(0.6, 0.68, 0.78), 0.4 * day)
+	land.set_night(smoothstep(0.35, 0.9, night + glow * 0.5 + _overcast * 0.25))
+	# weather: clouds, rain and snow
+	var wet: bool = game.weather == "rain" or game.weather == "storm" or game.weather == "snow"
+	_overcast = move_toward(_overcast, 1.0 if wet else 0.0, 0.01)
+	var grey := Color(0.5, 0.54, 0.6) * (0.35 + 0.65 * day)
+	sky_mat.sky_top_color = sky_mat.sky_top_color.lerp(grey * 0.8, _overcast)
+	sky_mat.sky_horizon_color = sky_mat.sky_horizon_color.lerp(grey, _overcast)
+	sky_mat.ground_horizon_color = sky_mat.sky_horizon_color
+	env.fog_light_color = env.fog_light_color.lerp(grey, _overcast)
+	env.fog_density = lerpf(0.0022, 0.011 if game.weather != "snow" else 0.016, _overcast)
+	env.ambient_light_energy += 0.12 * _overcast
+	if game.weather == "heat":
+		env.fog_light_color = env.fog_light_color.lerp(Color(0.9, 0.8, 0.6), 0.4)
+	rain.emitting = game.weather == "rain" or game.weather == "storm"
+	snow.emitting = game.weather == "snow"
+	var above := target + Vector3(0, 13.0, 0)
+	rain.position = above
+	snow.position = above
+	land.climate = game.climate
 
 
 func _pan(screen_delta: Vector2) -> void:
@@ -169,10 +277,10 @@ func _ray_ground(screen: Vector2):
 	var dir := cam.project_ray_normal(screen)
 	if dir.y >= -0.01:
 		return null
-	var step := 0.35
+	var step := 0.3
 	var prev := from
 	var p := from
-	for k in 900:
+	for k in 1500:
 		p += dir * step
 		var inside := p.x >= 0.0 and p.z >= 0.0 and p.x < World.W and p.z < World.H
 		var ground := maxf(land.height_at(p.x, p.z), 0.0) if inside else -1.6
@@ -276,20 +384,13 @@ func _process(delta: float) -> void:
 	_update_camera()
 	_update_hover()
 
-	# day and night
-	var c := sky.sample(game.minutes / 1440.0)
-	var bright := c.get_luminance()
-	sun.light_color = c
-	sun.light_energy = 0.15 + 0.6 * bright
-	env.ambient_light_color = Color("dfeaff") * c
-	env.ambient_light_energy = 0.3 + 0.2 * bright
-	env.background_color = Color("9fd3f2") * c
+	_update_sky()
 
 	land.set_season(game.season())
 	_update_cursor()
 	_overlay_timer -= delta
 	if _overlay_timer <= 0.0:
-		_overlay_timer = 2.0
+		_overlay_timer = 3.0
 		_rebuild_overlay()
 	_inspect_timer -= delta
 	if _inspect_timer <= 0.0:
@@ -350,7 +451,7 @@ func _tile_ok(t: Vector2i) -> bool:
 		return world.can_build(tool, t) == ""
 	match tool:
 		"bulldoze": return world.build[i] != D.B.NONE and t != world.entry
-		"weed": return world.invasive[i] > 0.0
+		"weed": return world.invasive[i] > 0.0 and world.inv_seen[i] == 1
 		"plant":
 			var ter := world.terrain[i]
 			return world.build[i] == D.B.NONE and world.trees[i] == 0 and (ter == D.T.GRASS or ter == D.T.FOREST or ter == D.T.MEADOW) \
@@ -358,14 +459,19 @@ func _tile_ok(t: Vector2i) -> bool:
 	return false
 
 
-func _tile_quad(m: MeshBuilder, t: Vector2i, col: Color, lift: float) -> void:
+func _tile_quad(m: MeshBuilder, t: Vector2i, col: Color, lift: float, parts: int = 2) -> void:
 	var water := world.is_water(world.terrain[World.ti(t)])
 	var floor_y := 0.0 if water else -9.0
-	var pts: Array[Vector3] = []
-	for c in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(1, 1), Vector2i(0, 1)]:
-		pts.append(Vector3(t.x + c.x, maxf(land.corner(t.x + c.x, t.y + c.y), floor_y) + lift, t.y + c.y))
-	m.tri(pts[0], pts[1], pts[2], col, Vector3.UP)
-	m.tri(pts[0], pts[2], pts[3], col, Vector3.UP)
+	var step := 1.0 / parts
+	for j in parts:
+		for i in parts:
+			var pts: Array[Vector3] = []
+			for c in [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]:
+				var px: float = t.x + (i + c.x) * step
+				var pz: float = t.y + (j + c.y) * step
+				pts.append(Vector3(px, maxf(land.height_at(px, pz), floor_y) + lift, pz))
+			m.tri(pts[0], pts[1], pts[2], col, Vector3.UP)
+			m.tri(pts[0], pts[2], pts[3], col, Vector3.UP)
 
 
 func _update_cursor() -> void:
@@ -373,7 +479,7 @@ func _update_cursor() -> void:
 	ghost.visible = false
 	if tool == null:
 		if sel_tile.x >= 0:
-			_tile_quad(m, sel_tile, Color(1, 1, 1, 0.4), 0.07)
+			_tile_quad(m, sel_tile, Color(1, 1, 1, 0.4), 0.09, 4)
 		hud.hint_label.text = ""
 		cursor_mesh.mesh = m.commit()
 		return
@@ -387,7 +493,7 @@ func _update_cursor() -> void:
 		cost = world.cost_at(tool, hover)
 		for t in world.footprint(tool, hover):
 			if World.inb(t.x, t.y):
-				_tile_quad(m, t, good_col if why == "" else bad_col, 0.07)
+				_tile_quad(m, t, good_col if why == "" else bad_col, 0.09, 4)
 		var sz: Vector2i = D.BUILD[tool].size
 		var cx := hover.x + sz.x * 0.5
 		var cz := hover.y + sz.y * 0.5
@@ -400,7 +506,7 @@ func _update_cursor() -> void:
 		for t in tiles:
 			var ok := _tile_ok(t)
 			if World.inb(t.x, t.y):
-				_tile_quad(m, t, good_col if ok else bad_col, 0.07)
+				_tile_quad(m, t, good_col if ok else bad_col, 0.09, 4)
 			if ok:
 				good += 1
 				cost += world.cost_at(tool, t) if tool is int else int(D.TOOLS[tool].cost)
@@ -476,7 +582,7 @@ func _rebuild_overlay() -> void:
 					"disturb":
 						col = Color(0.85, 0.2, 0.15, clampf(world.disturb[i], 0.0, 1.0) * 0.75)
 				if col.a > 0.02:
-					_tile_quad(m, Vector2i(x, y), col, 0.05)
+					_tile_quad(m, Vector2i(x, y), col, 0.1)
 	overlay_mesh.mesh = m.commit()
 
 
@@ -519,7 +625,13 @@ func _update_inspector() -> void:
 		hud.set_inspector(text)
 	elif sel is Ecology.Animal:
 		var sp: Dictionary = D.SPECIES[sel.sp]
-		hud.set_inspector("%s\nPopulation: about %d (%s)\n%s" % [sp.name, int(round(game.eco.pops[sel.sp])), game.eco.status(sel.sp).to_lower(), sp.desc])
+		var lvl := game.eco.known(sel.sp)
+		var info := "Not yet studied. Ecologists surveying this habitat will learn more."
+		if lvl == 1:
+			info = "Early impressions only. " + str(sp.desc)
+		elif lvl == 2:
+			info = "About %d in the park (%s). %s" % [int(round(game.eco.pops[sel.sp])), game.eco.status(sel.sp).to_lower(), D.NOTES[sp.id]]
+		hud.set_inspector("%s\nCurrently: %s\n%s" % [sp.name, sel.doing, info])
 	elif sel is Staffing.Staff:
 		hud.set_inspector("%s, %s\n%s\nJobs completed: %d" % [sel.name, D.STAFF[sel.role].name, D.STAFF[sel.role].desc, sel.done])
 	elif sel_tile.x >= 0:
@@ -538,10 +650,17 @@ func _update_inspector() -> void:
 		elif world.build[i] != D.B.NONE:
 			lines.append(str(D.BUILD[world.build[i]].name))
 		lines.append(D.TERRAIN_NAMES[world.terrain[i]])
-		lines.append("Habitat %d%%   Scenery %d%%   Disturbance %d%%" % [int(world.quality[i] * 100.0), int(world.scenic(sel_tile) * 100.0), int(world.disturb[i] * 100.0)])
+		if world.count_kind(D.B.RESEARCH) > 0:
+			lines.append("Habitat %d%%   Scenery %d%%   Disturbance %d%%" % [int(world.quality[i] * 100.0), int(world.scenic(sel_tile) * 100.0), int(world.disturb[i] * 100.0)])
+		else:
+			lines.append("Scenery %d%%   (habitat data needs a Research Station)" % int(world.scenic(sel_tile) * 100.0))
 		if world.rare[i] > 0.0:
 			lines.append("Lady's slipper orchid colony (health %d%%)" % int(world.rare[i] * 100.0))
-		if world.invasive[i] > 0.0:
+		if world.fire[i] > 0:
+			lines.append("On fire!")
+		elif world.burned[i] > 0:
+			lines.append("Burn scar, recovering (%d days)" % world.burned[i])
+		if world.invasive[i] > 0.0 and world.inv_seen[i] == 1:
 			lines.append("Invasive %s (%d%% cover)" % ["milfoil" if world.is_water(world.terrain[i]) else "thistle", int(world.invasive[i] * 100.0)])
 		if world.litter[i] > 0:
 			lines.append("Litter: %d pieces" % world.litter[i])
@@ -579,6 +698,15 @@ func _dev_hooks(args: Dictionary) -> void:
 		hud.toggle_panel(args.panel)
 	if args.has("overlay"):
 		overlay_mode = args.overlay
+	if args.has("weather"):
+		game.weather = args.weather
+		_overcast = 1.0 if args.weather in ["rain", "storm", "snow"] else 0.0
+	if args.has("season"):
+		game.day += int(args.season) * D.DAYS_PER_SEASON
+	if args.has("fire"):
+		for k in 40:
+			var ft := Vector2i(int(target.x) + game.rng.randi_range(-4, 4), int(target.z) + game.rng.randi_range(-4, 4))
+			game.eco.ignite(ft)
 	if args.has("speed"):
 		hud.set_speed(int(args.speed))
 	if args.has("uitest"):
@@ -605,6 +733,7 @@ func _report() -> void:
 	for k in game.sat_by_type:
 		print("  sat %s: %.0f" % [k, game.sat_by_type[k][0] / game.sat_by_type[k][1]])
 	print("staff done: ", game.staffing.staff.map(func(s): return "%s %d" % [s.role, s.done]))
+	print("weather ", game.weather, " drought ", game.drought, " climate ", game.climate, " understanding %.2f" % game.eco.understanding(), " surveys ", game.eco.surveys, " discoveries ", game.discoveries.map(func(d): return d.id))
 	print("grants: active ", game.grants.active.size(), " done ", game.grants.completed)
 
 
@@ -750,6 +879,6 @@ func _ui_test() -> void:
 	await _click_tool(0, 1)
 	await _mouse(_screen(e + Vector2i(-4, -6)), null)
 	hud.set_speed(4)
-	for k in 300:
+	for k in 40:
 		await get_tree().process_frame
 	print("after a while: visitors ", game.visitors.people_count(), " ", game.date_text())

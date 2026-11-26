@@ -45,6 +45,11 @@ class Glyph extends Control:
 			"flask":
 				Art.poly(self, r, [0.4, 0.08, 0.6, 0.08, 0.6, 0.4, 0.9, 0.92, 0.1, 0.92, 0.4, 0.4], Color("cfe8f5"))
 				Art.poly(self, r, [0.32, 0.6, 0.68, 0.6, 0.86, 0.9, 0.14, 0.9], Color("7e6bc4"))
+			"sun":
+				Art.circ(self, r, 0.5, 0.5, 0.3, Color("f2b632"))
+				for i in 8:
+					var a := i * PI / 4.0
+					Art.line(self, r, 0.5 + cos(a) * 0.38, 0.5 + sin(a) * 0.38, 0.5 + cos(a) * 0.48, 0.5 + sin(a) * 0.48, Color("f2b632"), 0.07)
 			"clock":
 				Art.circ(self, r, 0.5, 0.5, 0.46, Color("4a90d9"))
 				Art.circ(self, r, 0.5, 0.5, 0.36, Color.WHITE)
@@ -225,7 +230,8 @@ func _build_top() -> void:
 	_chip(h, "date", "clock", "Season, day and time. A year has four 6-day seasons; summer is busiest.", 215)
 	_chip(h, "visitors", "people", "Visitors in the park right now", 34)
 	_chip(h, "stars", "star", "Visitor rating (out of 5). Better ratings bring more visitors.", 30)
-	_chip(h, "eco", "leaf", "Ecosystem health: habitat, species populations and water quality", 44)
+	_chip(h, "eco", "leaf", "Ecosystem health, as far as your researchers can tell. Shows ? until ecologists have surveyed the park.", 44)
+	_chip(h, "weather", "sun", "Today's weather", 70)
 	_chip(h, "safety", "shield", "Visitor safety record", 44)
 	_chip(h, "research", "flask", "Research points to spend on new techniques", 30)
 	var spacer := Control.new()
@@ -443,7 +449,10 @@ func _panel_park() -> void:
 	var g := game
 	_kv("Status", "Open" if g.open else "Closed", GREEN if g.open else Color("d9534f"))
 	_kbar("Visitor rating", g.stars / 5.0, "%.1f" % g.stars)
-	_kbar("Ecosystem", g.eco.health / 100.0, "%d%%" % int(g.eco.health))
+	if g.eco.understanding() >= 0.08:
+		_kbar("Ecosystem (est.)", g.eco.health / 100.0, _eco_text())
+	else:
+		_kv("Ecosystem", "unknown: no research yet", Color("b5553f"))
 	_kbar("Safety", g.safety / 100.0, "%d%%" % int(g.safety))
 	_head("Visitors")
 	_kv("In the park now", str(g.visitors.people_count()))
@@ -454,7 +463,10 @@ func _panel_park() -> void:
 	_kv("All-time visitors", str(g.total_visitors))
 	_head("Park condition")
 	_kv("Littered tiles", str(g.world.litter_tiles.size()), Color("d9534f") if g.world.litter_tiles.size() > 10 else INK)
-	_kv("Invasive species tiles", str(g.world.invasive_tiles.size()), Color("d9534f") if g.world.invasive_tiles.size() > 0 else INK)
+	var inv := g.eco.seen_invasive_count()
+	_kv("Known invasive patches", str(inv), Color("d9534f") if inv > 0 else INK)
+	if not g.world.fire_tiles.is_empty():
+		_kv("Tiles on fire", str(g.world.fire_tiles.size()), Color("d9534f"))
 	_kv("Trail length", "%d tiles" % g.world.trail_tiles.size())
 	_kv("Serious incidents", str(g.serious_incidents))
 	_head("What visitors are saying")
@@ -475,34 +487,73 @@ func _panel_park() -> void:
 		side_body.add_child(_para("Nothing built yet. Overlooks, picnic areas and visitor centers give people a reason to come."))
 
 
+func _eco_text() -> String:
+	var u := game.eco.understanding()
+	if u < 0.08:
+		return "?"
+	if u < 0.5:
+		return "~%d%%" % (int(round(game.eco.health / 10.0)) * 10)
+	return "%d%%" % int(game.eco.health)
+
+
 func _panel_wildlife() -> void:
 	var e := game.eco
-	_kbar("Ecosystem health", e.health / 100.0, "%d%%" % int(e.health))
-	_kbar("Habitat", e.habitat_ratio, "%d%%" % int(e.habitat_ratio * 100.0))
-	_kbar("Water quality", e.water_quality, "%d%%" % int(e.water_quality * 100.0))
-	side_body.add_child(_para("Roads, parking and crowds disturb habitat. Litter and runoff foul the water. Invasive species choke out natives. Use the Habitat view to see where wildlife is under pressure."))
-	for group in ["animal", "plant"]:
-		_head("Animals" if group == "animal" else "Plants")
+	var u := e.understanding()
+	var has_station := game.world.count_kind(D.B.RESEARCH) > 0
+	if u < 0.08:
+		side_body.add_child(_para("You know almost nothing about this ecosystem yet. Build a Research Station and hire ecologists: everything on this page comes from their field surveys. Without them, species can decline or invasives can spread unnoticed.", 14, Color("b5553f")))
+	else:
+		_kbar("Ecosystem (est.)", e.health / 100.0, _eco_text())
+		if u >= 0.3:
+			_kbar("Habitat", e.habitat_ratio, "%d%%" % int(e.habitat_ratio * 100.0))
+		if e.known(e.sp_index("trout")) >= 1 or e.known(e.sp_index("salamander")) >= 1:
+			_kbar("Water quality", e.water_quality, "%d%%" % int(e.water_quality * 100.0))
+		else:
+			side_body.add_child(_para("Water quality: unknown. Survey the shorelines."))
+	_kbar("Understanding", u, "%d%%" % int(u * 100.0))
+	side_body.add_child(_para("Field surveys completed: %d. Knowledge fades if monitoring stops." % e.surveys))
+	_head("Weather and climate")
+	var wtxt: String = D.WEATHER[game.weather].name
+	if game.drought:
+		wtxt += ", drought"
+	_kv("Today", wtxt)
+	if has_station:
+		_kv("Forecast for tomorrow", D.WEATHER[game.weather_next].name)
+		_kv("Warming since opening", "+%.2f degrees" % game.climate)
+	else:
+		side_body.add_child(_para("A Research Station adds a weather station: forecasts and climate records."))
+	var titles := {"animal": "Animals", "insect": "Insects", "plant": "Plants"}
+	for group in ["animal", "insect", "plant"]:
+		_head(titles[group])
 		for i in D.SPECIES.size():
 			var sp: Dictionary = D.SPECIES[i]
 			if sp.kind != group:
 				continue
-			var r := e.ratio(i)
+			var lvl := e.known(i)
 			var h := HBoxContainer.new()
 			h.add_theme_constant_override("separation", 8)
-			h.tooltip_text = sp.desc
-			var a := _label(sp.name, 14)
+			var a := _label(sp.name if lvl > 0 else "Unstudied species", 14, INK if lvl > 0 else Color("9aa392"))
 			a.custom_minimum_size.x = 138
-			a.mouse_filter = Control.MOUSE_FILTER_PASS
 			h.add_child(a)
-			h.add_child(_bar(r, _health_color(r)))
-			var st := _label(e.status(i), 13, _health_color(r))
-			st.custom_minimum_size.x = 70
+			if lvl == 0:
+				h.add_child(_label("no data", 13, Color("9aa392")))
+				side_body.add_child(h)
+				continue
+			var v := e.ratio(i)
+			if lvl == 1:
+				v = round(v * 4.0) / 4.0 # rough impressions only
+			h.add_child(_bar(minf(v, 1.0), _health_color(v) if v <= 1.25 else Color("e0a030")))
+			var st := _label(e.status(i) if lvl == 2 else "unsure", 13, _health_color(v))
+			st.custom_minimum_size.x = 86
 			st.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 			h.add_child(st)
 			side_body.add_child(h)
-			var count := "%d colonies" % int(round(e.pops[i])) if sp.id == "orchid" else ("%d%% of natural range" % int(r * 100.0) if group == "plant" else "about %d animals" % int(round(e.pops[i])))
-			side_body.add_child(_para("%s. %s" % [count, sp.desc], 12))
+			if lvl == 1:
+				side_body.add_child(_para("Early impressions only. %s More surveys in its habitat will firm this up." % sp.desc, 12))
+			else:
+				var count := "%d colonies" % int(round(e.pops[i])) if sp.id == "orchid" else ("%d%% of natural abundance" % int(v * 100.0) if group != "animal" else "about %d animals" % int(round(e.pops[i])))
+				var arrow := "rising" if e.trend[i] > 0.05 else ("falling" if e.trend[i] < -0.05 else "steady")
+				side_body.add_child(_para("%s, %s. %s" % [count, arrow, D.NOTES[sp.id]], 12))
 
 
 func _panel_staff() -> void:
@@ -537,6 +588,7 @@ func _panel_staff() -> void:
 		var doing := "idle"
 		match s.job:
 			"patrol": doing = "on patrol"
+			"fire": doing = "fighting a wildfire"
 			"rescue": doing = "responding to an emergency"
 			"clean": doing = "collecting litter"
 			"weed": doing = "removing invasives"
@@ -566,6 +618,17 @@ func _panel_research() -> void:
 			h.add_child(b)
 		side_body.add_child(h)
 		side_body.add_child(_para(t.desc))
+	_discoveries()
+
+
+func _discoveries() -> void:
+	_head("Discoveries (%d)" % game.discoveries.size())
+	if game.discoveries.is_empty():
+		side_body.add_child(_para("Nothing yet. Ecologists in the field notice how species, visitors, weather and your decisions affect one another."))
+	for k in range(game.discoveries.size() - 1, -1, -1):
+		var d: Dictionary = game.discoveries[k]
+		side_body.add_child(_label(d.title, 14, GREEN))
+		side_body.add_child(_para(d.text, 12))
 
 
 func _panel_grants() -> void:
@@ -728,6 +791,7 @@ func _update_objectives() -> void:
 		["Build a Scenic Overlook on the trail", w.count_kind(D.B.OVERLOOK) > 0],
 		["Add a Restroom and a Trash bin", w.count_kind(D.B.RESTROOM) > 0 and w.count_kind(D.B.BIN) > 0],
 		["Build a Ranger Station and hire a ranger", game.staffing.count("ranger") > 0],
+		["Build a Research Station and hire an ecologist", game.staffing.count("eco") > 0],
 		["Accept a grant (Grants menu)", game.grants.active.size() + game.grants.completed > 0],
 	]
 	var all_done := true
@@ -763,8 +827,9 @@ func _update_stats() -> void:
 	stat.date.text = g.date_text()
 	stat.visitors.text = str(g.visitors.people_count())
 	stat.stars.text = "%.1f" % g.stars
-	stat.eco.text = "%d%%" % int(g.eco.health)
-	stat.eco.add_theme_color_override("font_color", _health_color(g.eco.health / 100.0) if g.eco.health < 70.0 else INK)
+	stat.eco.text = _eco_text()
+	stat.eco.add_theme_color_override("font_color", _health_color(g.eco.health / 100.0) if g.eco.health < 70.0 and g.eco.understanding() >= 0.08 else INK)
+	stat.weather.text = str(D.WEATHER[g.weather].name) + (" (drought)" if g.drought else "")
 	stat.safety.text = "%d%%" % int(g.safety)
 	stat.research.text = str(int(g.research))
 	for b in speed_buttons:

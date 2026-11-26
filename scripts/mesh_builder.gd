@@ -8,6 +8,11 @@ var c := PackedColorArray()
 
 
 func tri(a: Vector3, b: Vector3, d: Vector3, col: Color, nrm: Vector3) -> void:
+	# keep the winding consistent with the normal (Godot front faces are clockwise)
+	if (d - a).cross(b - a).dot(nrm) < 0.0:
+		var swap := b
+		b = d
+		d = swap
 	v.append(a); v.append(b); v.append(d)
 	n.append(nrm); n.append(nrm); n.append(nrm)
 	c.append(col); c.append(col); c.append(col)
@@ -81,6 +86,30 @@ func cone(base: Vector3, radius: float, height: float, sides: int, col: Color, t
 		var p1 := base + Vector3(cos(a1) * radius, 0, sin(a1) * radius)
 		tri_out(p0, p1, top, col.darkened(0.1 * (i % 2)), inside)
 		tri(p0, p1, base, col.darkened(0.25), Vector3.DOWN)
+
+
+## Cone with smooth (per-vertex) normals, for trees.
+func cone_smooth(base: Vector3, radius: float, height: float, sides: int, col: Color, tip: Color) -> void:
+	var top := base + Vector3(0, height, 0)
+	var ny := radius / maxf(height, 0.001)
+	for i in sides:
+		var a0 := TAU * i / sides
+		var a1 := TAU * (i + 1) / sides
+		var d0 := Vector3(cos(a0), 0, sin(a0))
+		var d1 := Vector3(cos(a1), 0, sin(a1))
+		var n0 := Vector3(d0.x, ny, d0.z).normalized()
+		var n1 := Vector3(d1.x, ny, d1.z).normalized()
+		# droop the skirt a little so tiers read as boughs
+		var p0 := base + d0 * radius * (1.0 if i % 2 == 0 else 0.88)
+		var p1 := base + d1 * radius * (1.0 if (i + 1) % 2 == 0 else 0.88)
+		if (top - p0).cross(p1 - p0).dot(n0) < 0.0:
+			v.append(p1); v.append(p0); v.append(top)
+			n.append(n1); n.append(n0); n.append((n0 + n1).normalized())
+		else:
+			v.append(p0); v.append(p1); v.append(top)
+			n.append(n0); n.append(n1); n.append((n0 + n1).normalized())
+		c.append(col); c.append(col); c.append(tip)
+		tri(p0, p1, base, col.darkened(0.45), Vector3.DOWN)
 
 
 func cyl(base: Vector3, radius: float, height: float, sides: int, col: Color) -> void:

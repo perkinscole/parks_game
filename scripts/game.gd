@@ -38,6 +38,12 @@ var last_serious_day := -99
 var comments := {}
 var sat_by_type := {} # visitor type id -> [decayed sum, decayed count]
 var open := false
+var weather := "clear"
+var weather_next := "clear"
+var dry_days := 0
+var drought := false
+var climate := 0.0 # degrees of warming since the park opened
+var discoveries: Array = []
 var _last_hour := 6
 var _field_timer := 0.0
 var _warned := {}
@@ -47,9 +53,9 @@ func setup(seed_val: int) -> void:
 	rng.seed = seed_val
 	world = World.new()
 	world.generate(seed_val)
+	staffing = Staffing.new(self)
 	eco = Ecology.new(self)
 	visitors = Visitors.new(self)
-	staffing = Staffing.new(self)
 	grants = Grants.new(self)
 	update_appeal()
 
@@ -113,6 +119,7 @@ func _on_hour(h: int) -> void:
 
 func _new_day() -> void:
 	day += 1
+	_advance_weather()
 	var wages := staffing.daily_wages()
 	if wages > 0.0:
 		add_money(-wages, "Wages")
@@ -173,6 +180,48 @@ func record_rating(sat: float) -> void:
 	stars = sum / (ratings.size() + 8.0) / 20.0
 
 
+func _roll_weather() -> String:
+	var s := season()
+	var x := rng.randf()
+	var heat := 0.12 + climate * 0.12
+	match s:
+		0: return "rain" if x < 0.3 else ("storm" if x < 0.37 else "clear")
+		1: return "heat" if x < heat else ("storm" if x < heat + 0.08 else ("rain" if x < heat + 0.2 else "clear"))
+		2: return "rain" if x < 0.28 else ("storm" if x < 0.33 else "clear")
+	return "snow" if x < 0.4 else "clear"
+
+
+func _advance_weather() -> void:
+	weather = weather_next
+	weather_next = _roll_weather()
+	if weather == "rain" or weather == "storm" or weather == "snow":
+		dry_days = 0
+	else:
+		dry_days += 2 if weather == "heat" else 1
+	var was := drought
+	drought = dry_days >= 5 and season() != 3
+	if drought and not was:
+		say("Drought: it has not rained in days. Streams are low, meadows are browning and fire danger is high.", "warn")
+	if weather == "storm":
+		say("Thunderstorm today: fewer visitors, more accidents, and lightning can start fires.", "warn")
+	elif weather == "heat":
+		say("Heatwave today. Fire danger is high.", "warn")
+	if (day - 1) % (D.DAYS_PER_SEASON * 4) == 0 and day > 1:
+		climate += 0.15
+		if world.count_kind(D.B.RESEARCH) > 0:
+			say("Your weather station's yearly summary: the park is now %.2f degrees warmer than when you started." % climate, "info")
+
+
+## Records something your researchers have worked out about the ecosystem.
+func discover(id: String, title: String, text: String, tile: Vector2i = NO_TILE) -> void:
+	for d in discoveries:
+		if d.id == id:
+			return
+	discoveries.append({id = id, title = title, text = text, day = day})
+	say("Discovery: %s. %s" % [title, text], "good", tile)
+	add_research(8.0)
+
+
 func has_tech(id: String) -> bool:
 	return techs.has(id)
 
@@ -221,7 +270,7 @@ func update_appeal() -> void:
 	var fee_factor := clampf(exp(-(fee - fair_fee) / fair_fee * 1.3), 0.08, 1.35)
 	var rating_factor := 0.35 + stars / 5.0 * 1.0
 	var safety_factor := 0.6 + 0.4 * safety / 100.0
-	demand = (5.0 + a * 11.0) * fee_factor * rating_factor * safety_factor * D.SEASON_DEMAND[season()]
+	demand = (5.0 + a * 11.0) * fee_factor * rating_factor * safety_factor * D.SEASON_DEMAND[season()] * float(D.WEATHER[weather].demand)
 	if not open:
 		demand = 0.0
 
@@ -275,7 +324,7 @@ func plant_tree(t: Vector2i) -> bool:
 		return false
 	if ter != D.T.GRASS and ter != D.T.FOREST and ter != D.T.MEADOW:
 		return false
-	world.trees[i] = 2 if world.elev[i] > 0.5 else 1
+	world.trees[i] = 2 if world.elev[i] > 0.45 or D.hash2(t.x, t.y, 2) < 0.6 else 1
 	if ter == D.T.GRASS:
 		world.terrain[i] = D.T.FOREST
 	world.fields_dirty = true
@@ -285,7 +334,7 @@ func plant_tree(t: Vector2i) -> bool:
 
 
 func weed(t: Vector2i) -> bool:
-	if world.invasive[World.ti(t)] <= 0.0 or money < 40:
+	if world.invasive[World.ti(t)] <= 0.0 or world.inv_seen[World.ti(t)] == 0 or money < 40:
 		return false
 	world.set_invasive(t, 0.0)
 	world.fields_dirty = true

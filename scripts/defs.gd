@@ -104,6 +104,10 @@ const SPECIES := [
 		desc = "Needs cold, clean water. Hurt by runoff, litter and invasive milfoil."},
 	{id = "salamander", name = "Tiger Salamander", kind = "animal", habitat = [T.SAND, T.WATER], density = 0.08, sens = 1.6, growth = 0.18, vis = 7, speed = 6.0,
 		desc = "Indicator species: the first to vanish when shorelines are polluted or developed."},
+	{id = "wolf", name = "Gray Wolf", kind = "animal", habitat = [T.GRASS, T.MEADOW, T.FOREST, T.ROCK], density = 0.006, sens = 1.5, growth = 0.07, vis = 5, speed = 30.0,
+		desc = "Apex predator that needs large, undisturbed country. Keeps elk numbers and behaviour in check."},
+	{id = "bee", name = "Native Bees", kind = "insect", habitat = [T.MEADOW, T.GRASS], density = 2.0, sens = 0.5, growth = 0.3, vis = 0, speed = 0.0,
+		desc = "Pollinators. They need wildflowers, and wildflowers need them."},
 	{id = "wildflower", name = "Wildflowers", kind = "plant", habitat = [T.MEADOW], density = 1.0, sens = 0.6, growth = 0.25, vis = 0, speed = 0.0,
 		desc = "Meadow blooms. Crowded out by invasive thistle."},
 	{id = "oldgrowth", name = "Old-Growth Pine", kind = "plant", habitat = [T.FOREST], density = 1.0, sens = 0.3, growth = 0.04, vis = 0, speed = 0.0,
@@ -111,6 +115,31 @@ const SPECIES := [
 	{id = "orchid", name = "Lady's Slipper Orchid", kind = "plant", habitat = [], density = 1.0, sens = 2.0, growth = 0.05, vis = 0, speed = 0.0,
 		desc = "Rare orchid found in only a few colonies (pink flowers on the map). Dies if built over, trampled or overrun by invasives."},
 ]
+
+# Field notes: what your ecologists learn once a species is well studied.
+const NOTES := {
+	"elk": "Without wolves, elk multiply and linger in meadows, grazing wildflowers and young trees down to stubble. This knock-on effect is called a trophic cascade.",
+	"bear": "Bears are omnivores with superb noses. One taste of human food teaches a bear to seek people out, which usually ends badly for the bear.",
+	"fox": "Foxes thrive along edges where forest meets meadow. Generalists like these often cope with change better than specialists.",
+	"goat": "Mountain goats rely on steep ground to escape predators. Repeated disturbance pushes them off the best feeding ledges.",
+	"eagle": "Eagles sit at the top of the aquatic food chain, so anything that harms fish (warm water, pollution, invasives) reaches them too.",
+	"beaver": "Beaver dams slow water and create wetlands that shelter amphibians and young trout. One species can engineer habitat for many.",
+	"trout": "Cutthroat trout need cold, clear, oxygen-rich water. Runoff from parking lots, drought and a warming climate all squeeze them.",
+	"salamander": "Amphibians breathe partly through their skin, so they absorb pollutants readily. Their decline is an early warning.",
+	"wolf": "Wolves change where elk feed as well as how many there are. Their return lets streamside plants recover.",
+	"bee": "Most wildflowers cannot set seed without pollinators. Lose the bees and the meadows fade a few seasons later.",
+	"wildflower": "Meadows depend on pollinators, on not being overgrazed, and on occasional fire to hold back the forest.",
+	"oldgrowth": "Old forest takes centuries to form. Low-intensity fire clears the understory and can actually help it; clearing does not.",
+	"orchid": "Lady's slipper orchids need a specific soil fungus to germinate and take years to flower, so lost colonies rarely return.",
+}
+
+const WEATHER := {
+	"clear": {name = "Clear", demand = 1.0, risk = 1.0},
+	"rain": {name = "Rain", demand = 0.55, risk = 1.4},
+	"storm": {name = "Thunderstorm", demand = 0.25, risk = 2.5},
+	"heat": {name = "Heatwave", demand = 0.85, risk = 1.3},
+	"snow": {name = "Snow", demand = 0.7, risk = 1.5},
+}
 
 const TECHS := [
 	{id = "bins", name = "Bear-Proof Bins", cost = 60, desc = "Bins lock out wildlife. Dangerous bear encounters drop sharply near bins."},

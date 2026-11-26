@@ -142,6 +142,7 @@ func maybe_incident(gr, t: Vector2i) -> void:
 	elif w.is_water(ter): p *= 2.0
 	if w.build[i] != D.B.TRAIL: p *= 0.3
 	if g.has_tech("trails"): p *= 0.6
+	p *= float(D.WEATHER[g.weather].risk)
 	var kind := "injury"
 	if gr.walked > 22 and rng.randf() < 0.45:
 		kind = "lost"
@@ -247,13 +248,12 @@ func _update_staff(s: Staff, dt: float) -> void:
 				if s.job == "patrol": spd *= 0.7
 			s.dist += spd * dt
 			var L := (s.pts.size() - 1) * float(D.TILE)
-			var f := clampf(s.dist / D.TILE, 0.0, s.pts.size() - 1.0)
-			var i := int(f)
-			s.pos = s.pts[i] if i >= s.pts.size() - 1 else s.pts[i].lerp(s.pts[i + 1], f - i)
+			s.pos = Paths.pos(s.pts, s.dist)
 			if s.dist >= L:
 				s.state = S.WORKING
 				match s.job:
 					"clean": s.timer = 1.2
+					"fire": s.timer = 2.5
 					"weed": s.timer = 3.0
 					"survey": s.timer = 4.0
 					"rescue":
@@ -279,7 +279,15 @@ func _finish_job(s: Staff) -> void:
 			g.add_research(0.5)
 			s.done += 1
 		"survey":
-			g.add_research(0.6 * (0.5 + g.eco.health / 100.0))
+			g.add_research(0.4 * (0.5 + g.eco.health / 100.0))
+			g.eco.survey(s.target)
+			s.done += 1
+		"fire":
+			for dy in range(-1, 2):
+				for dx in range(-1, 2):
+					var ft: Vector2i = s.target + Vector2i(dx, dy)
+					if World.inb(ft.x, ft.y) and w.fire[World.ti(ft)] > 0:
+						g.eco.put_out(ft)
 			s.done += 1
 		"rescue":
 			if s.incident != null:
@@ -364,6 +372,12 @@ func _pick_job(s: Staff) -> void:
 					inc.ranger = s
 					s.incident = inc
 					return
+			if not w.fire_tiles.is_empty():
+				var fr := _nearest(w.fire_tiles.keys(), here, true)
+				if not fr.is_empty() and _go(s, fr[1], "fire"):
+					s.claim = fr[0]
+					claims[fr[0]] = true
+					return
 			var target := Vector2i(-1, -1)
 			if not w.trail_tiles.is_empty():
 				target = w.trail_tiles[rng.randi() % w.trail_tiles.size()]
@@ -383,7 +397,11 @@ func _pick_job(s: Staff) -> void:
 			else:
 				_go_home(s)
 		"eco":
-			var r := _nearest(w.invasive_tiles.keys(), here, true)
+			var known: Array = []
+			for ik: int in w.invasive_tiles.keys():
+				if w.inv_seen[ik] == 1:
+					known.append(ik)
+			var r := _nearest(known, here, true)
 			if not r.is_empty():
 				if _go(s, r[1], "weed"):
 					s.claim = r[0]

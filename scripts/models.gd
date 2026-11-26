@@ -38,6 +38,10 @@ static func structure(kind: int) -> ArrayMesh:
 			m.block(V(-0.36, 0.08, 0.78), V(0.06, 0.46, 0.06), WOOD_D)
 			m.block(V(0.36, 0.08, 0.78), V(0.06, 0.46, 0.06), WOOD_D)
 			m.cyl(V(0.72, 0.08, 0.62), 0.02, 1.1, 5, Color("777777"))
+			m.block(V(-0.45, 0.7, -0.3), V(0.16, 0.6, 0.16), Color("8f887b"))
+			m.block(V(0, 0.08, 0.2), V(1.44, 0.14, 0.04), Color("8f887b"))
+			for bx in [-0.55, 0.55]:
+				m.block(V(bx, 0.08, 0.95), V(0.3, 0.1, 0.1), WOOD_D)
 			m.block(V(0.84, 1.0, 0.62), V(0.22, 0.14, 0.02), Color("3f8f5a"))
 		D.B.RESTROOM:
 			m.block(V(0, 0, 0), V(0.7, 0.42, 0.56), Color("e9eef2"))
@@ -94,6 +98,9 @@ static func structure(kind: int) -> ArrayMesh:
 			m.block(V(-0.62, 0.06, 0.7), V(0.06, 0.46, 0.06), WOOD_D)
 			m.block(V(0.62, 0.06, 0.7), V(0.06, 0.46, 0.06), WOOD_D)
 			m.cyl(V(-0.7, 0.06, 0.6), 0.02, 1.15, 5, Color("777777"))
+			m.block(V(0.45, 0.62, -0.35), V(0.18, 0.62, 0.18), Color("8f887b"))
+			m.block(V(0, 0.06, 0.56), V(1.36, 0.03, 0.34), WOOD_D)
+			m.block(V(0, 0.22, 0.72), V(1.3, 0.03, 0.03), WOOD_D)
 			m.block(V(-0.58, 1.08, 0.6), V(0.24, 0.15, 0.02), Color("e8554e"))
 		D.B.RESEARCH:
 			m.block(V(0, 0, 0), V(1.6, 0.06, 1.5), Color("cfd8dd"))
@@ -143,8 +150,7 @@ static func trunk() -> ArrayMesh:
 	if _cache.has("trunk"):
 		return _cache["trunk"]
 	var m := MeshBuilder.new()
-	m.block(V(0, 0, 0), V(0.09, 0.3, 0.09), WOOD_D)
-	m.cyl(V(0.06, 0.012, 0.05), 0.3, 0.004, 8, Color("4f8f4a")) # soft contact shadow
+	m.cyl(V(0, -0.1, 0), 0.05, 0.5, 6, Color("5b4433"))
 	_cache["trunk"] = m.commit()
 	return _cache["trunk"]
 
@@ -153,18 +159,23 @@ static func leaf() -> ArrayMesh:
 	if _cache.has("leaf"):
 		return _cache["leaf"]
 	var m := MeshBuilder.new()
-	m.blob(V(0, 0.52, 0), V(0.34, 0.32, 0.34), Color.WHITE)
-	m.blob(V(0.1, 0.72, 0.05), V(0.22, 0.2, 0.22), Color(1.08, 1.08, 1.08))
+	m.blob(V(0, 0.62, 0), V(0.36, 0.34, 0.36), Color(0.9, 0.9, 0.9), 8)
+	m.blob(V(0.14, 0.86, 0.06), V(0.26, 0.24, 0.26), Color.WHITE, 7)
+	m.blob(V(-0.16, 0.8, -0.1), V(0.22, 0.2, 0.22), Color(0.95, 0.95, 0.95), 7)
 	_cache["leaf"] = m.commit()
 	return _cache["leaf"]
 
+## Tall slender spruce, white so it can be tinted per instance.
 static func conifer() -> ArrayMesh:
 	if _cache.has("conifer"):
 		return _cache["conifer"]
 	var m := MeshBuilder.new()
-	m.cone(V(0, 0.18, 0), 0.34, 0.42, 6, Color(0.85, 0.85, 0.85))
-	m.cone(V(0, 0.42, 0), 0.26, 0.38, 6, Color(0.95, 0.95, 0.95), 0.5)
-	m.cone(V(0, 0.66, 0), 0.17, 0.34, 6, Color(1.08, 1.08, 1.08))
+	var tiers := 5
+	for k in tiers:
+		var f := float(k) / tiers
+		var shade := 0.72 + f * 0.3
+		m.cone_smooth(V(0, 0.22 + f * 1.0, 0), 0.34 * (1.0 - f * 0.72), 0.5 - f * 0.12, 9,
+			Color(shade * 0.82, shade * 0.82, shade * 0.82), Color(shade, shade, shade))
 	_cache["conifer"] = m.commit()
 	return _cache["conifer"]
 
@@ -172,9 +183,53 @@ static func rock() -> ArrayMesh:
 	if _cache.has("rock"):
 		return _cache["rock"]
 	var m := MeshBuilder.new()
-	m.blob(V(0, 0.08, 0), V(0.2, 0.16, 0.17), Color("a9a299"), 5)
+	m.blob(V(0, 0.07, 0), V(0.24, 0.17, 0.19), Color("8d877d"), 5)
+	m.blob(V(0.16, 0.04, 0.1), V(0.13, 0.1, 0.12), Color("7f796f"), 5)
 	_cache["rock"] = m.commit()
 	return _cache["rock"]
+
+## Window panes for a building, drawn with a glowing material at night.
+## Returns an empty mesh for buildings without windows.
+static func windows(kind: int) -> ArrayMesh:
+	var key := "win%d" % kind
+	if _cache.has(key):
+		return _cache[key]
+	var m := MeshBuilder.new()
+	var w := Color.WHITE
+	match kind:
+		D.B.VISITOR_CENTER:
+			m.block(V(-0.42, 0.3, 0.475), V(0.3, 0.26, 0.02), w)
+			m.block(V(0.42, 0.3, 0.475), V(0.3, 0.26, 0.02), w)
+			for sx in [-1.0, 1.0]:
+				m.block(V(0.705 * sx, 0.3, -0.3), V(0.02, 0.24, 0.26), w)
+				m.block(V(0.705 * sx, 0.3, 0.12), V(0.02, 0.24, 0.26), w)
+			m.block(V(0, 0.82, 0.552), V(0.2, 0.16, 0.02), w)
+		D.B.RANGER:
+			m.block(V(-0.42, 0.28, 0.415), V(0.26, 0.2, 0.02), w)
+			m.block(V(0.42, 0.28, 0.415), V(0.26, 0.2, 0.02), w)
+			for sx in [-1.0, 1.0]:
+				m.block(V(0.685 * sx, 0.28, -0.1), V(0.02, 0.2, 0.3), w)
+		D.B.RESEARCH:
+			m.block(V(-0.3, 0.24, 0.365), V(0.44, 0.2, 0.02), w)
+			m.block(V(-0.705, 0.24, -0.1), V(0.02, 0.2, 0.4), w)
+			m.block(V(0.765, 0.16, 0.1), V(0.02, 0.16, 0.3), w)
+		D.B.SNACK:
+			m.block(V(0, 0.24, 0.215), V(0.46, 0.16, 0.02), w)
+		D.B.RESTROOM:
+			m.block(V(0, 0.34, 0.285), V(0.5, 0.05, 0.02), w)
+		D.B.GATE:
+			m.block(V(-0.62, 0.14, 0.215), V(0.12, 0.12, 0.02), w)
+	_cache[key] = m.commit()
+	return _cache[key]
+
+static func flame() -> ArrayMesh:
+	if _cache.has("flame"):
+		return _cache["flame"]
+	var m := MeshBuilder.new()
+	m.cone(V(0, 0, 0), 0.22, 0.9, 5, Color.WHITE)
+	m.cone(V(0.12, 0, 0.08), 0.13, 0.55, 4, Color(1.0, 0.8, 0.5))
+	_cache["flame"] = m.commit()
+	return _cache["flame"]
 
 static func flower() -> ArrayMesh:
 	if _cache.has("flower"):
@@ -224,22 +279,41 @@ static func orchid() -> ArrayMesh:
 	_cache["orchid"] = m.commit()
 	return _cache["orchid"]
 
-## Person parts, white where tinted per instance.
+## Person parts, white where tinted per instance. Legs and arms are separate
+## so they can swing; their origin is the hip / shoulder joint.
 static func person_body() -> ArrayMesh:
 	if _cache.has("pbody"):
 		return _cache["pbody"]
 	var m := MeshBuilder.new()
-	m.block(V(-0.035, 0, 0), V(0.05, 0.1, 0.06), Color(0.25, 0.27, 0.34))
-	m.block(V(0.035, 0, 0), V(0.05, 0.1, 0.06), Color(0.25, 0.27, 0.34))
 	m.block(V(0, 0.1, 0), V(0.15, 0.15, 0.1), Color.WHITE)
+	m.block(V(0, 0.1, 0), V(0.152, 0.03, 0.102), Color(0.3, 0.3, 0.34))
 	_cache["pbody"] = m.commit()
 	return _cache["pbody"]
+
+static func person_leg() -> ArrayMesh:
+	if _cache.has("pleg"):
+		return _cache["pleg"]
+	var m := MeshBuilder.new()
+	m.box(V(0, -0.045, 0), V(0.055, 0.09, 0.06), Color(0.24, 0.27, 0.36))
+	m.box(V(0, -0.092, 0.012), V(0.058, 0.02, 0.085), Color(0.16, 0.13, 0.11))
+	_cache["pleg"] = m.commit()
+	return _cache["pleg"]
+
+static func person_arm() -> ArrayMesh:
+	if _cache.has("parm"):
+		return _cache["parm"]
+	var m := MeshBuilder.new()
+	m.box(V(0, -0.05, 0), V(0.04, 0.1, 0.05), Color(0.92, 0.92, 0.92))
+	m.box(V(0, -0.115, 0), V(0.04, 0.03, 0.045), Color(1.6, 1.25, 1.0))
+	_cache["parm"] = m.commit()
+	return _cache["parm"]
 
 static func person_head() -> ArrayMesh:
 	if _cache.has("phead"):
 		return _cache["phead"]
 	var m := MeshBuilder.new()
 	m.block(V(0, 0.26, 0), V(0.11, 0.1, 0.1), Color.WHITE)
+	m.block(V(0, 0.335, -0.01), V(0.115, 0.035, 0.11), Color(0.3, 0.2, 0.14))
 	_cache["phead"] = m.commit()
 	return _cache["phead"]
 
@@ -296,77 +370,132 @@ static func marker() -> ArrayMesh:
 	return _cache["marker"]
 
 
-## Animals face +X.
+## Leg joints for four-legged animals: [hip positions, leg length, thickness, colour].
+const LEGS := {
+	"elk": [[-0.13, 0.13], 0.06, 0.2, 0.04, "5c3d25"],
+	"bear": [[-0.14, 0.14], 0.08, 0.13, 0.08, "2f221a"],
+	"fox": [[-0.08, 0.08], 0.03, 0.09, 0.03, "5a3320"],
+	"goat": [[-0.09, 0.09], 0.05, 0.13, 0.035, "d8d2c6"],
+	"wolf": [[-0.12, 0.12], 0.045, 0.15, 0.04, "6f7378"],
+}
+
+static func leg(id: String) -> ArrayMesh:
+	var key := "leg_" + id
+	if _cache.has(key):
+		return _cache[key]
+	var spec: Array = LEGS[id]
+	var m := MeshBuilder.new()
+	var L: float = spec[2]
+	var th: float = spec[3]
+	m.box(V(0, -L * 0.5, 0), V(th, L, th), Color(spec[4]))
+	_cache[key] = m.commit()
+	return _cache[key]
+
+static func hips(id: String) -> Array:
+	var out: Array = []
+	if LEGS.has(id):
+		var spec: Array = LEGS[id]
+		for lx in spec[0]:
+			for sz in [-1.0, 1.0]:
+				out.append(V(lx, spec[2], spec[1] * sz))
+	return out
+
+## One eagle wing; its origin is the shoulder and it extends along +Z.
+static func wing() -> ArrayMesh:
+	if _cache.has("wing"):
+		return _cache["wing"]
+	var m := MeshBuilder.new()
+	m.quad(V(-0.1, 0, 0), V(0.1, 0, 0), V(0.05, 0, 0.3), V(-0.12, 0, 0.3), Color("4a3524"), Vector3.UP)
+	m.quad(V(-0.12, 0, 0.3), V(0.05, 0, 0.3), V(-0.02, 0, 0.58), V(-0.14, 0, 0.55), Color("3d2b1f"), Vector3.UP)
+	_cache["wing"] = m.commit()
+	return _cache["wing"]
+
+## Animal bodies (legs and wings are separate, see above). They face +X.
 static func animal(id: String) -> ArrayMesh:
-	if _cache.has("animal_" + id):
-		return _cache["animal_" + id]
+	var key := "animal_" + id
+	if _cache.has(key):
+		return _cache[key]
 	var m := MeshBuilder.new()
 	match id:
 		"elk":
 			var fur := Color("a87445")
-			for lx in [-0.13, 0.13]:
-				for lz in [-0.06, 0.06]:
-					m.block(V(lx, 0, lz), V(0.04, 0.2, 0.04), Color("5c3d25"))
 			m.block(V(0, 0.2, 0), V(0.4, 0.18, 0.18), fur)
+			m.block(V(0.02, 0.36, 0), V(0.3, 0.03, 0.15), Color("8f5f37"))
 			m.block(V(-0.2, 0.26, 0), V(0.03, 0.1, 0.14), Color("ead9b8"))
 			m.block(V(0.2, 0.3, 0), V(0.09, 0.2, 0.1), Color("8a5c36"))
 			m.block(V(0.27, 0.44, 0), V(0.16, 0.09, 0.1), Color("8a5c36"))
+			m.block(V(0.35, 0.445, 0), V(0.03, 0.05, 0.07), Color("3a2a1c"))
 			for s in [-1.0, 1.0]:
+				m.block(V(0.21, 0.5, 0.06 * s), V(0.03, 0.05, 0.02), Color("8a5c36"))
 				m.block(V(0.22, 0.53, 0.05 * s), V(0.02, 0.16, 0.02), Color("e8dcc0"))
 				m.block(V(0.22, 0.63, 0.09 * s), V(0.02, 0.02, 0.1), Color("e8dcc0"))
 				m.block(V(0.27, 0.6, 0.05 * s), V(0.08, 0.02, 0.02), Color("e8dcc0"))
+				m.block(V(0.18, 0.66, 0.12 * s), V(0.02, 0.07, 0.02), Color("e8dcc0"))
 		"bear":
 			var fur := Color("3d2d22")
-			for lx in [-0.14, 0.14]:
-				for lz in [-0.08, 0.08]:
-					m.block(V(lx, 0, lz), V(0.08, 0.13, 0.08), Color("2f221a"))
 			m.block(V(0, 0.12, 0), V(0.46, 0.24, 0.26), fur)
+			m.block(V(-0.05, 0.36, 0), V(0.26, 0.05, 0.22), Color("463428"))
 			m.block(V(0.28, 0.2, 0), V(0.18, 0.18, 0.2), fur)
 			m.block(V(0.39, 0.22, 0), V(0.07, 0.08, 0.1), Color("a8855f"))
+			m.block(V(0.425, 0.27, 0), V(0.02, 0.03, 0.04), Color("1a1512"))
 			m.block(V(0.27, 0.38, 0.07), V(0.05, 0.05, 0.05), fur)
 			m.block(V(0.27, 0.38, -0.07), V(0.05, 0.05, 0.05), fur)
+			m.block(V(-0.24, 0.2, 0), V(0.04, 0.06, 0.06), fur)
 		"fox":
 			var fur := Color("ef7f2e")
-			for lx in [-0.08, 0.08]:
-				m.block(V(lx, 0, 0), V(0.035, 0.09, 0.08), Color("5a3320"))
 			m.block(V(0, 0.09, 0), V(0.26, 0.1, 0.1), fur)
+			m.block(V(0, 0.09, 0), V(0.2, 0.03, 0.102), Color("f5e6d0"))
 			m.block(V(0.17, 0.14, 0), V(0.1, 0.1, 0.1), fur)
 			m.block(V(0.24, 0.15, 0), V(0.06, 0.04, 0.05), Color.WHITE)
+			m.block(V(0.275, 0.17, 0), V(0.015, 0.02, 0.025), Color("1a1512"))
 			m.block(V(0.15, 0.24, 0.035), V(0.03, 0.05, 0.03), Color("5a3320"))
 			m.block(V(0.15, 0.24, -0.035), V(0.03, 0.05, 0.03), Color("5a3320"))
 			m.block(V(-0.2, 0.11, 0), V(0.16, 0.08, 0.08), fur)
 			m.block(V(-0.3, 0.11, 0), V(0.06, 0.07, 0.07), Color.WHITE)
+		"wolf":
+			var fur := Color("8a8f94")
+			m.block(V(0, 0.15, 0), V(0.38, 0.14, 0.13), fur)
+			m.block(V(0, 0.27, 0), V(0.3, 0.025, 0.11), Color("5f6368"))
+			m.block(V(0, 0.15, 0), V(0.3, 0.035, 0.132), Color("c9cdd1"))
+			m.block(V(0.2, 0.22, 0), V(0.1, 0.14, 0.1), fur)
+			m.block(V(0.26, 0.3, 0), V(0.14, 0.1, 0.11), fur)
+			m.block(V(0.35, 0.3, 0), V(0.08, 0.05, 0.06), Color("c9cdd1"))
+			m.block(V(0.39, 0.33, 0), V(0.015, 0.02, 0.03), Color("1a1512"))
+			m.block(V(0.23, 0.4, 0.04), V(0.03, 0.05, 0.03), Color("5f6368"))
+			m.block(V(0.23, 0.4, -0.04), V(0.03, 0.05, 0.03), Color("5f6368"))
+			m.block(V(-0.25, 0.17, 0), V(0.16, 0.06, 0.06), Color("6f7378"))
 		"goat":
 			var fur := Color("fbfaf4")
-			for lx in [-0.09, 0.09]:
-				for lz in [-0.05, 0.05]:
-					m.block(V(lx, 0, lz), V(0.035, 0.13, 0.035), Color("d8d2c6"))
 			m.block(V(0, 0.13, 0), V(0.3, 0.17, 0.16), fur)
 			m.block(V(0.17, 0.26, 0), V(0.11, 0.12, 0.1), fur)
 			m.block(V(0.2, 0.2, 0), V(0.03, 0.07, 0.03), Color("e6e0d2"))
+			m.block(V(0.225, 0.32, 0), V(0.015, 0.02, 0.03), Color("1a1512"))
 			m.block(V(0.15, 0.38, 0.03), V(0.02, 0.08, 0.02), Color("3a3a3a"))
 			m.block(V(0.15, 0.38, -0.03), V(0.02, 0.08, 0.02), Color("3a3a3a"))
+			m.block(V(-0.16, 0.24, 0), V(0.03, 0.04, 0.04), fur)
 		"beaver":
 			m.block(V(0, 0, 0), V(0.24, 0.11, 0.14), Color("8a5c36"))
 			m.block(V(0.14, 0.03, 0), V(0.1, 0.1, 0.11), Color("8a5c36"))
+			m.block(V(0.195, 0.06, 0), V(0.015, 0.025, 0.04), Color("1a1512"))
 			m.block(V(-0.19, 0.01, 0), V(0.16, 0.03, 0.1), Color("4a3524"))
 		"trout":
 			m.box(V(0, 0, 0), V(0.26, 0.05, 0.08), Color("3d5f78"))
 			m.box(V(-0.17, 0, 0), V(0.08, 0.05, 0.14), Color("3d5f78"))
+			m.box(V(0.02, 0.03, 0), V(0.08, 0.03, 0.02), Color("4d7391"))
 		"salamander":
 			m.box(V(0, 0.02, 0), V(0.16, 0.035, 0.05), Color("e9a23b"))
 			m.box(V(0.1, 0.022, 0), V(0.06, 0.04, 0.06), Color("e9a23b"))
 			m.box(V(-0.14, 0.015, 0), V(0.14, 0.025, 0.025), Color("d98a1f"))
 			m.box(V(0, 0.04, 0), V(0.04, 0.01, 0.03), Color("3a2a14"))
+			for sx in [-0.05, 0.06]:
+				m.box(V(sx, 0.012, 0), V(0.02, 0.015, 0.11), Color("d98a1f"))
 		"eagle":
 			m.box(V(0, 0, 0), V(0.3, 0.07, 0.1), Color("3d2b1f"))
 			m.box(V(0.19, 0.01, 0), V(0.1, 0.08, 0.09), Color.WHITE)
 			m.box(V(0.26, 0.0, 0), V(0.05, 0.03, 0.04), Color("f2c14e"))
 			m.box(V(-0.2, 0, 0), V(0.1, 0.02, 0.14), Color.WHITE)
-			m.quad(V(-0.08, 0.02, 0.05), V(0.1, 0.02, 0.05), V(0.04, 0.1, 0.55), V(-0.1, 0.1, 0.55), Color("4a3524"), Vector3.UP)
-			m.quad(V(-0.08, 0.02, -0.05), V(0.1, 0.02, -0.05), V(0.04, 0.1, -0.55), V(-0.1, 0.1, -0.55), Color("4a3524"), Vector3.UP)
-	_cache["animal_" + id] = m.commit()
-	return _cache["animal_" + id]
+	_cache[key] = m.commit()
+	return _cache[key]
 
 
 static func landmark(kind: String) -> ArrayMesh:

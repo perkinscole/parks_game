@@ -50,17 +50,10 @@ class Group:
 	func pos_at(d: float) -> Vector2:
 		if pts.is_empty():
 			return World.center(cur)
-		var f := clampf(d / D.TILE, 0.0, pts.size() - 1.0)
-		var i := int(f)
-		if i >= pts.size() - 1:
-			return pts[pts.size() - 1]
-		return pts[i].lerp(pts[i + 1], f - i)
+		return Paths.pos(pts, d)
 
 	func dir_at(d: float) -> Vector2:
-		if pts.size() < 2:
-			return Vector2.UP
-		var i := clampi(int(d / D.TILE), 0, pts.size() - 2)
-		return (pts[i + 1] - pts[i]).normalized()
+		return Paths.dir(pts, d)
 
 
 var g
