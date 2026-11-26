@@ -288,6 +288,11 @@ func start_game(seed_val: int, save: Dictionary) -> void:
 	pitch = 0.62
 	_update_camera()
 
+	if Icons.tex.is_empty():
+		# lives beside the game so the pictures survive a return to the menu
+		var icons := Icons.new()
+		get_tree().root.add_child.call_deferred(icons)
+		icons.build.call_deferred(land.mat.duplicate())
 	hud = HUD.new()
 	add_child(hud)
 	hud.setup(game, font)
@@ -301,6 +306,15 @@ func start_game(seed_val: int, save: Dictionary) -> void:
 	hud.set_quality(quality)
 	if save.is_empty():
 		game.say("Welcome, Superintendent! This wild land is yours to protect and share. The highway passes the south edge: build your park road north from the glowing marker.", "good")
+		if args.is_empty() or args.has("story"):
+			var summit := "the high peaks"
+			var others: Array = []
+			for lm in world.landmarks:
+				if lm.kind == "summit":
+					summit = lm.name
+				elif others.size() < 2:
+					others.append(lm.name)
+			hud.start_story(summit, (", " + " and ".join(others)) if not others.is_empty() else "")
 	else:
 		game.say("Welcome back. The park reopens this morning.", "good")
 	game.say("Camera: drag to move, right-drag (or Alt-drag) to orbit, scroll or pinch to zoom. Keys: WASD move, Q/E turn, R/F tilt, +/- zoom. Trees turn see-through while you build; hold T to see through them any time.", "info")
@@ -1155,6 +1169,8 @@ func _dev_hooks(args: Dictionary) -> void:
 				dist = float(args.get("dist", "12"))
 				pitch = 0.5
 	zoom_goal = dist
+	if args.has("cat"):
+		hud._show_category(int(args.cat))
 	if args.has("panel"):
 		hud.toggle_panel(args.panel)
 	if args.has("overlay"):

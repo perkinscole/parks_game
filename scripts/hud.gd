@@ -62,6 +62,14 @@ class Glyph extends Control:
 			"check":
 				Art.circ(self, r, 0.5, 0.5, 0.46, Color("3f8f5a"))
 				draw_polyline(PackedVector2Array([Art.P(r, 0.26, 0.52), Art.P(r, 0.44, 0.7), Art.P(r, 0.76, 0.32)]), Color.WHITE, size.x * 0.12)
+			"ranger":
+				Art.circ(self, r, 0.5, 0.5, 0.5, Color("2f4a3a"))
+				Art.box(self, r, 0.22, 0.72, 0.78, 1.0, Color("6f8f5a"))
+				Art.circ(self, r, 0.5, 0.52, 0.2, Color("e2b08a"))
+				Art.box(self, r, 0.22, 0.34, 0.78, 0.4, Color("7a5a36"))
+				Art.poly(self, r, [0.34, 0.36, 0.4, 0.16, 0.6, 0.16, 0.66, 0.36], Color("8a683f"))
+				Art.circ(self, r, 0.43, 0.52, 0.025, Color("2a2a2a"))
+				Art.circ(self, r, 0.57, 0.52, 0.025, Color("2a2a2a"))
 			"todo":
 				draw_arc(size * 0.5, size.x * 0.4, 0, TAU, 20, Color("b9ad8f"), size.x * 0.1)
 
@@ -77,8 +85,25 @@ class ToolButton extends Button:
 		if compact:
 			s = minf(size.x, size.y) - 14.0
 			r = Rect2((size - Vector2(s, s)) * 0.5, Vector2(s, s))
-		draw_rect(Rect2(r.position - Vector2(5, 3), r.size + Vector2(10, 7)), Color(0.86, 0.9, 0.86, 0.9))
-		Art.structure(self, tool, r)
+		# a little diorama tile: sky above, ground below, the model standing on it
+		var tile := Rect2(r.position - Vector2(6, 3), r.size + Vector2(12, 7))
+		var sky := StyleBoxFlat.new()
+		sky.bg_color = Color("9fc4dc") if not button_pressed else Color("bfe2f7")
+		sky.set_corner_radius_all(7)
+		sky.border_color = Color("6fd3ff") if button_pressed or is_hovered() else Color(1, 1, 1, 0.16)
+		sky.set_border_width_all(2 if button_pressed else 1)
+		draw_style_box(sky, tile)
+		var turf := StyleBoxFlat.new()
+		turf.bg_color = Color("6f9a55")
+		turf.corner_radius_bottom_left = 6
+		turf.corner_radius_bottom_right = 6
+		draw_style_box(turf, Rect2(tile.position + Vector2(1, tile.size.y * 0.68), Vector2(tile.size.x - 2, tile.size.y * 0.32 - 1)))
+		if tool is int and Icons.tex.has(tool):
+			var big := r.grow(5.0)
+			draw_texture_rect(Icons.tex[tool], Rect2(big.position + Vector2(2, 4), big.size), false, Color(0, 0, 0, 0.22))
+			draw_texture_rect(Icons.tex[tool], big, false)
+		else:
+			Art.structure(self, tool, r)
 		var f := get_theme_default_font()
 		var wd := f.get_string_size(cost_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
 		var nw := f.get_string_size(label_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
@@ -101,7 +126,19 @@ var tool_row: HBoxContainer
 var cat_buttons: Array[Button] = []
 var cat_index := 0
 var hint_label: Label
-var cam_orbit := Vector2.ZERO # held camera buttons: x turns, y tilts
+var cam_orbit := Vector2.ZERO
+# story and guided first day
+var guide: PanelContainer
+var guide_title: Label
+var guide_text: Label
+var guide_next: Button
+var guide_skip: Button
+var dim: ColorRect
+var _pages: Array = []
+var _page := 0
+var _guiding := false
+var _guide_step := -1
+var _pulse := 0.0 # held camera buttons: x turns, y tilts
 var side: PanelContainer
 var side_title: Label
 var side_body: VBoxContainer
@@ -127,6 +164,7 @@ func setup(g: Game, f: Font) -> void:
 	_build_toolbar()
 	_build_side()
 	_build_misc()
+	_build_guide()
 	game.toast.connect(_on_toast)
 	_show_category(0)
 	_update_stats()
@@ -926,21 +964,50 @@ func _update_objectives() -> void:
 	for b in w.build:
 		if b == D.B.ROAD:
 			road_n += 1
+	# title, done, the ranger's advice, toolbar category to point at
 	var steps := [
-		["Extend the road from the highway", road_n >= 6],
-		["Place an Entrance Gate on the road", w.count_kind(D.B.GATE) > 0],
-		["Build a Parking Lot beside the road", w.lot_tiles.size() >= 4],
-		["Lay a Trail from the parking lot", w.trail_tiles.size() >= 8],
-		["Build a Scenic Overlook on the trail", w.count_kind(D.B.OVERLOOK) > 0],
-		["Add a Restroom and a Trash bin", w.count_kind(D.B.RESTROOM) > 0 and w.count_kind(D.B.BIN) > 0],
-		["Build a Ranger Station and hire a ranger", game.staffing.count("ranger") > 0],
-		["Build a Research Station and hire an ecologist", game.staffing.count("eco") > 0],
-		["Accept a grant (Grants menu)", game.grants.active.size() + game.grants.completed > 0],
+		["Extend the road from the highway", road_n >= 6,
+			"Open Roads & Trails in the bar below, pick Road, and drag north from the glowing marker. Roads bring people in, but they also cut habitat in two and put animals under wheels, so keep them short.", 0],
+		["Place an Entrance Gate on the road", w.count_kind(D.B.GATE) > 0,
+			"Put an Entrance Gate on the road. The gate is where visitors pay the fee that funds every ranger and every survey. You can change the fee in the Park panel.", 0],
+		["Build a Parking Lot beside the road", w.lot_tiles.size() >= 4,
+			"Drag a Parking Lot next to the road. Each car needs a space, and a full lot turns families away. Pavement sheds oily water though, so keep it back from streams.", 0],
+		["Lay a Trail from the parking lot", w.trail_tiles.size() >= 8,
+			"Lay a Trail out from the lot. On steep ground use the Switchback Trail: hikers crawl up steep paths. A good trail gathers footsteps into one line, which spares everything beside it.", 0],
+		["Build a Scenic Overlook on the trail", w.count_kind(D.B.OVERLOOK) > 0,
+			"Build a Scenic Overlook beside the trail. Watch the scenery score as you move it: high ground and named landmarks score best. This is what people came for.", 2],
+		["Add a Restroom and a Trash bin", w.count_kind(D.B.RESTROOM) > 0 and w.count_kind(D.B.BIN) > 0,
+			"Add a Restroom and a Trash bin near the lot. Litter is not just ugly: food scraps teach bears to seek out people, and that never ends well for the bear.", 1],
+		["Build a Ranger Station and hire a ranger", game.staffing.count("ranger") > 0,
+			"Build a Ranger Station from Operations, then hire a ranger in the Staff panel (the person button on the left). Rangers find lost hikers, treat injuries and keep people and wildlife apart.", 3],
+		["Build a Research Station and hire an ecologist", game.staffing.count("eco") > 0,
+			"Build a Research Station and hire an ecologist. Until they survey the land you are managing blind: every species count, food-web link and invasive weed is hidden until someone goes out and looks.", 3],
+		["Accept a grant (Grants menu)", game.grants.active.size() + game.grants.completed > 0,
+			"Open Grants (the tick button on the left) and accept one. Grants pay you to hit conservation goals, which is how a careful park can out-earn a crowded one.", -1],
 	]
 	var all_done := true
-	for s in steps:
-		if not s[1]:
+	var open_i := -1
+	for k in steps.size():
+		if not steps[k][1]:
 			all_done = false
+			if open_i < 0:
+				open_i = k
+	if _guiding and _pages.is_empty():
+		if all_done:
+			_guiding = false
+			_guide_step = -1
+			_show_pages([["The park is open", "That is opening day done, Superintendent. From here the land answers back: seasons turn, droughts and fires come, herds grow or crash, and weeds creep in along your trails. Keep your scientists in the field, read what they find in the Wildlife panel, and build with a light hand. Good luck."]], false)
+		elif open_i != _guide_step:
+			if _guide_step >= 0:
+				game.say("Done: %s." % steps[_guide_step][0], "good")
+			_guide_step = open_i
+			guide_title.text = "Step %d of %d: %s" % [open_i + 1, steps.size(), steps[open_i][0]]
+			guide_text.text = steps[open_i][2]
+			guide_next.visible = false
+			guide_skip.text = "Hide tips"
+			guide.visible = true
+			guide.set_meta("cat", steps[open_i][3])
+			_fit_guide()
 	if all_done:
 		objectives.visible = false
 		return
@@ -961,6 +1028,120 @@ func _update_objectives() -> void:
 			first_open = false
 		obj_box.add_child(h)
 	objectives.reset_size()
+
+
+# ------------------------------------------------------------ story and guide
+
+func _build_guide() -> void:
+	dim = ColorRect.new()
+	dim.color = Color(0.02, 0.05, 0.08, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.visible = false
+	root.add_child(dim)
+	guide = PanelContainer.new()
+	guide.add_theme_stylebox_override("panel", _sb(Color(PANEL, 0.97), 12, Color(ACCENT, 0.7), 2, 14.0))
+	guide.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	guide.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	guide.offset_top = 58
+	guide.custom_minimum_size.x = 560
+	guide.visible = false
+	root.add_child(guide)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 14)
+	guide.add_child(row)
+	var face := Glyph.new("ranger", 64)
+	face.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	row.add_child(face)
+	var col := VBoxContainer.new()
+	col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	col.add_theme_constant_override("separation", 6)
+	row.add_child(col)
+	col.add_child(_label("Juniper Hale, Chief Ranger", 12, ACCENT))
+	guide_title = _label("", 18, Color.WHITE)
+	guide_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	guide_title.custom_minimum_size.x = 440
+	col.add_child(guide_title)
+	guide_text = _para("", 14, Color("d5dde2"))
+	guide_text.custom_minimum_size.x = 440
+	col.add_child(guide_text)
+	var btns := HBoxContainer.new()
+	btns.alignment = BoxContainer.ALIGNMENT_END
+	btns.add_theme_constant_override("separation", 8)
+	col.add_child(btns)
+	guide_skip = _button("Skip tutorial", _guide_skip)
+	btns.add_child(guide_skip)
+	guide_next = _button("Next", _guide_next)
+	btns.add_child(guide_next)
+
+
+## Opens a new park with its story, then walks through the first day.
+func start_story(summit: String, others: String) -> void:
+	_guiding = true
+	_guide_step = -1
+	_show_pages([
+		["A new park", "After years of petitions and hearings, the country below %s has been set aside for good. There are no roads here yet, no trails and no rangers: only forest, river and rock%s. And you, its first Superintendent." % [summit, others]],
+		["Protect it and share it", "The job has two halves that pull against each other. People have to see this place before they will fight for it. But every road, car and bootprint changes what they came to see. Every choice you make here trades a little of one for the other."],
+		["What nobody knows yet", "Right now this land is a blank on the map. How many elk? Do wolves still hunt here? What is creeping in along the creek? You will not know until you build a Research Station and send ecologists out to look. The question mark by the leaf at the top left means just that: unknown."],
+		["Opening day", "I'm Juniper Hale. I have walked this ground for twenty years and I'll walk you through the first day. The highway runs along the southern boundary, where the marker is glowing. Let's bring a road in."],
+	], true)
+
+
+func _show_pages(pages: Array, pause: bool) -> void:
+	_pages = pages
+	_page = 0
+	if pause:
+		set_speed(0)
+	dim.visible = true
+	guide.offset_top = 150
+	_show_page()
+
+
+## Wrapped text only knows its height once it has its width, so shrink the
+## card to fit a moment later.
+func _fit_guide() -> void:
+	guide.size = Vector2(560, 0)
+	await get_tree().process_frame
+	guide.size = Vector2(560, 0)
+
+
+func _show_page() -> void:
+	guide_title.text = _pages[_page][0]
+	guide_text.text = _pages[_page][1]
+	guide_next.visible = true
+	guide_next.text = "Next" if _page < _pages.size() - 1 else ("Begin" if _guiding else "Close")
+	guide_skip.text = "Skip tutorial"
+	guide_skip.visible = _guiding
+	guide.visible = true
+	guide.set_meta("cat", -1)
+	_fit_guide()
+
+
+func _guide_next() -> void:
+	_page += 1
+	if _page < _pages.size():
+		_show_page()
+		return
+	_pages = []
+	dim.visible = false
+	guide.visible = false
+	guide.offset_top = 58
+	guide_skip.visible = true
+	if game.speed == 0:
+		set_speed(1)
+	_update_objectives()
+
+
+func _guide_skip() -> void:
+	var was_story := not _pages.is_empty()
+	_guiding = false
+	_guide_step = -1
+	_pages = []
+	dim.visible = false
+	guide.visible = false
+	guide.offset_top = 58
+	if was_story and game.speed == 0:
+		set_speed(1)
 
 
 func _update_stats() -> void:
@@ -986,6 +1167,11 @@ func _update_stats() -> void:
 
 
 func _process(delta: float) -> void:
+	# the toolbar button the current tip is about glows
+	_pulse += delta
+	var want: int = guide.get_meta("cat", -1) if guide.visible else -1
+	for k in cat_buttons.size():
+		cat_buttons[k].modulate = Color.WHITE.lerp(Color(1.5, 1.4, 0.8), 0.5 + 0.5 * sin(_pulse * 5.0)) if k == want and k != cat_index else Color.WHITE
 	_refresh -= delta
 	if _refresh <= 0.0:
 		_refresh = 0.2
