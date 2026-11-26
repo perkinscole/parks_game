@@ -1,3 +1,9 @@
 .godot/
 export/
 *.tmp
+
+# Godot never needs to import the supplied models: the game reads them directly
+models/**/*.import
+models/**/*_0.jpg
+models/*.import
+models/*_0.jpg
