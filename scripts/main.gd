@@ -3,6 +3,7 @@ extends Node3D
 ## camera, building tools and inspection.
 
 const LINEAR := [D.B.ROAD, D.B.TRAIL]
+const TERRA := ["raise", "lower", "level", "smooth"]
 
 var game: Game
 var world: World
@@ -45,6 +46,19 @@ var hover := Vector2i()
 var drag_start := Vector2i(-1, -1)
 var dragging := false
 var orbiting := false
+var mid_pan := false
+var sculpting := false
+var brush := 2.5
+var _level_h := 0.0
+var _sculpt_timer := 0.0
+var _sculpted := false
+var _route_key := []
+var _route: Array[Vector2i] = []
+# the camera eases toward where the controls point it
+var _s_target := Vector3.ZERO
+var _s_yaw := 0.0
+var _s_pitch := 0.5
+var _s_ready := false
 var left_pan := false
 var pan_moved := 0.0
 var sel_tile := Vector2i(-1, -1)
@@ -289,7 +303,7 @@ func start_game(seed_val: int, save: Dictionary) -> void:
 		game.say("Welcome, Superintendent! This wild land is yours to protect and share. The highway passes the south edge: build your park road north from the glowing marker.", "good")
 	else:
 		game.say("Welcome back. The park reopens this morning.", "good")
-	game.say("Camera: drag to move, right-drag to orbit, scroll or pinch to zoom (or WASD, Q/E, +/-). Trees turn see-through while you build; hold T to see through them any time.", "info")
+	game.say("Camera: drag to move, right-drag (or Alt-drag) to orbit, scroll or pinch to zoom. Keys: WASD move, Q/E turn, R/F tilt, +/- zoom. Trees turn see-through while you build; hold T to see through them any time.", "info")
 
 	_dev_hooks(args)
 
@@ -322,6 +336,12 @@ func _load_quality() -> int:
 
 
 func _on_menu_action(what: String) -> void:
+	if what == "north":
+		yaw = 0.0
+		return
+	if what == "help":
+		game.say("Move: drag, WASD or middle-drag.  Orbit: right-drag, Alt-drag or Shift-drag, Q/E to turn, R/F to tilt, Home faces north.  Zoom: scroll, pinch, +/-.  Build: pick a tool, click or drag; right-click or Esc cancels.  Terrain tools: hold the mouse, [ ] changes brush size.  T sees through trees.  Space pauses, 1-3 set speed.", "info")
+		return
 	match what:
 		"zoom_in": zoom_goal /= 1.35
 		"zoom_out": zoom_goal *= 1.35
@@ -365,11 +385,22 @@ func _update_camera() -> void:
 	var ground_y := land.top_at(target.x, target.z)
 	# follow the terrain smoothly, but never let the view sink into a hillside
 	target.y = ground_y if absf(ground_y - target.y) > 2.0 else lerpf(target.y, ground_y, 0.12)
-	pitch = clampf(pitch, 0.16, 1.45)
+	pitch = clampf(pitch, 0.1, 1.5)
 	dist = clampf(dist, 2.5, 320.0)
-	var offset := Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
-	cam.position = target + offset
-	cam.look_at(target, Vector3.UP)
+	var k := clampf(get_process_delta_time() * 14.0, 0.0, 1.0)
+	if not _s_ready or _shot != "" or _s_target.distance_to(target) > 70.0:
+		_s_ready = true
+		k = 1.0
+	_s_target = _s_target.lerp(target, k)
+	_s_yaw = lerpf(_s_yaw, yaw, k)
+	_s_pitch = lerpf(_s_pitch, pitch, k)
+	var offset := Vector3(sin(_s_yaw) * cos(_s_pitch), sin(_s_pitch), cos(_s_yaw) * cos(_s_pitch)) * dist
+	cam.position = _s_target + offset
+	# keep the lens out of the hillside when orbiting low
+	var floor_y := land.top_at(clampf(cam.position.x, 0.0, World.W), clampf(cam.position.z, 0.0, World.H)) + 0.6
+	if cam.position.x >= 0.0 and cam.position.z >= 0.0 and cam.position.x <= World.W and cam.position.z <= World.H and cam.position.y < floor_y:
+		cam.position.y = floor_y
+	cam.look_at(_s_target, Vector3.UP)
 
 
 func _make_precip(amount: int, size: Vector2, col: Color, speed: float) -> GPUParticles3D:
@@ -516,24 +547,45 @@ func _unhandled_input(event: InputEvent) -> void:
 		zoom_goal /= event.factor
 		return
 	if event is InputEventPanGesture:
-		zoom_goal *= 1.0 + event.delta.y * 0.03
+		# two fingers: zoom; with Shift or Alt held: orbit
+		if event.shift_pressed or event.alt_pressed:
+			yaw -= event.delta.x * 0.04
+			pitch += event.delta.y * 0.03
+		else:
+			zoom_goal *= 1.0 + event.delta.y * 0.03
 		return
 	if event is InputEventMouseButton:
 		match event.button_index:
 			MOUSE_BUTTON_WHEEL_UP:
-				if event.pressed: zoom_goal /= 1.12
+				if event.pressed:
+					zoom_goal /= 1.12
+					# zoom toward what the pointer is on
+					var hit = _ray_ground(event.position)
+					if hit != null and zoom_goal > 2.6:
+						target = target.lerp(Vector3(hit.x, target.y, hit.z), 0.1)
 			MOUSE_BUTTON_WHEEL_DOWN:
 				if event.pressed: zoom_goal *= 1.12
-			MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE:
+			MOUSE_BUTTON_RIGHT:
 				if event.pressed:
 					orbiting = true
 					pan_moved = 0.0
+			MOUSE_BUTTON_MIDDLE:
+				if event.pressed:
+					mid_pan = true
 			MOUSE_BUTTON_LEFT:
 				if event.pressed:
 					_update_hover()
-					if tool == null:
+					if event.alt_pressed or event.shift_pressed:
+						# Alt or Shift + drag orbits, for trackpads and one-button mice
+						orbiting = true
+						pan_moved = 99.0
+					elif tool == null:
 						left_pan = true
 						pan_moved = 0.0
+					elif tool is String and tool in TERRA:
+						sculpting = true
+						_sculpt_timer = 0.0
+						_level_h = world.height[World.ti(hover)]
 					elif _is_single():
 						_place_single()
 					else:
@@ -547,6 +599,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_3: hud.set_speed(4)
 			KEY_EQUAL, KEY_PLUS, KEY_KP_ADD: zoom_goal /= 1.3
 			KEY_MINUS, KEY_KP_SUBTRACT: zoom_goal *= 1.3
+			KEY_BRACKETLEFT: brush = maxf(1.0, brush - 0.5)
+			KEY_BRACKETRIGHT: brush = minf(6.0, brush + 0.5)
+			KEY_HOME, KEY_N: yaw = 0.0
 			KEY_ESCAPE:
 				dragging = false
 				hud.select_tool(null)
@@ -564,22 +619,33 @@ func _input(event: InputEvent) -> void:
 			yaw -= event.relative.x * 0.007
 			pitch += event.relative.y * 0.006
 			pan_moved += event.relative.length()
-		elif left_pan:
+		elif left_pan or mid_pan:
 			_pan(event.relative)
 			pan_moved += event.relative.length()
 	elif event is InputEventMouseButton and not event.pressed:
+		if event.button_index == MOUSE_BUTTON_MIDDLE:
+			mid_pan = false
 		if event.button_index == MOUSE_BUTTON_LEFT:
-			if left_pan:
+			if sculpting:
+				sculpting = false
+				if _sculpted:
+					_sculpted = false
+					world.rebuild_nav()
+					world.recompute_fields()
+					game.update_appeal()
+			elif orbiting and pan_moved >= 99.0:
+				orbiting = false
+			elif left_pan:
 				left_pan = false
 				if pan_moved < 6.0:
 					_inspect_click(event.position)
 			elif dragging:
 				_update_hover()
 				_apply_drag()
-		elif event.button_index == MOUSE_BUTTON_RIGHT or event.button_index == MOUSE_BUTTON_MIDDLE:
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			if orbiting:
 				orbiting = false
-				if event.button_index == MOUSE_BUTTON_RIGHT and pan_moved < 6.0:
+				if pan_moved < 6.0:
 					if dragging:
 						dragging = false
 					else:
@@ -596,8 +662,23 @@ func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): mv.y -= 1
 	if mv != Vector2.ZERO:
 		_pan(mv * delta * 520.0)
-	if Input.is_key_pressed(KEY_Q): yaw -= delta * 1.4
-	if Input.is_key_pressed(KEY_E): yaw += delta * 1.4
+	var orbit: Vector2 = hud.cam_orbit
+	if Input.is_key_pressed(KEY_Q): orbit.x -= 1.0
+	if Input.is_key_pressed(KEY_E): orbit.x += 1.0
+	if Input.is_key_pressed(KEY_R): orbit.y += 1.0
+	if Input.is_key_pressed(KEY_F): orbit.y -= 1.0
+	yaw += orbit.x * delta * 1.5
+	pitch += orbit.y * delta * 0.9
+	if sculpting:
+		_sculpt_timer -= delta
+		if _sculpt_timer <= 0.0:
+			_sculpt_timer = 0.07
+			var moved := game.terraform(hover, tool, brush, _level_h)
+			if moved > 0:
+				_sculpted = true
+			elif moved < 0:
+				sculpting = false
+				game.say("Not enough money for earthworks.", "warn")
 	zoom_goal = clampf(zoom_goal, 2.5, 320.0)
 	dist = lerpf(dist, zoom_goal, clampf(delta * 10.0, 0.0, 1.0))
 	_update_camera()
@@ -670,7 +751,88 @@ func _rect(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 	return out
 
 
+## A walking route from a to b that climbs gently: on a steep hillside it
+## zigzags instead of going straight up. Dijkstra over the tiles around the
+## two ends, where every step costs more the steeper it is.
+func _switchback(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
+	if _route_key == [a, b]:
+		return _route
+	_route_key = [a, b]
+	_route = [] as Array[Vector2i]
+	var pad := 10
+	var x0 := maxi(0, mini(a.x, b.x) - pad)
+	var y0 := maxi(0, mini(a.y, b.y) - pad)
+	var bw := mini(World.W - 1, maxi(a.x, b.x) + pad) - x0 + 1
+	var bh := mini(World.H - 1, maxi(a.y, b.y) + pad) - y0 + 1
+	if bw * bh > 6000 or not World.inb(a.x, a.y) or not World.inb(b.x, b.y):
+		_route = _line(a, b)
+		return _route
+	var cost := PackedFloat32Array()
+	cost.resize(bw * bh)
+	cost.fill(1e9)
+	var from := PackedInt32Array()
+	from.resize(bw * bh)
+	from.fill(-1)
+	var open := {} # node -> true, a small frontier scanned for its minimum
+	var s := (a.y - y0) * bw + (a.x - x0)
+	var goal := (b.y - y0) * bw + (b.x - x0)
+	cost[s] = 0.0
+	open[s] = true
+	var steps := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+	while not open.is_empty():
+		var cur := -1
+		var best := 1e9
+		for k: int in open:
+			if cost[k] < best:
+				best = cost[k]
+				cur = k
+		open.erase(cur)
+		if cur == goal:
+			break
+		var cx := cur % bw + x0
+		var cy := cur / bw + y0
+		var ch: float = world.height[World.idx(cx, cy)]
+		for d: Vector2i in steps:
+			var nx := cx + d.x
+			var ny := cy + d.y
+			if nx < x0 or ny < y0 or nx >= x0 + bw or ny >= y0 + bh:
+				continue
+			var t := Vector2i(nx, ny)
+			var kind := world.build[World.idx(nx, ny)]
+			var walkable: bool = kind == D.B.TRAIL or kind == D.B.ROAD or kind == D.B.PARKING
+			if not walkable and world.can_build(D.B.TRAIL, t) != "":
+				continue
+			var grade := absf(world.height[World.idx(nx, ny)] - ch)
+			var over := maxf(0.0, grade - 0.3)
+			var c := best + (0.6 if walkable else 1.0) + over * over * 26.0 + over * 3.0
+			var ni := (ny - y0) * bw + (nx - x0)
+			if c < cost[ni]:
+				cost[ni] = c
+				from[ni] = cur
+				open[ni] = true
+	if from[goal] < 0 and goal != s:
+		return _route
+	var cur2 := goal
+	while cur2 >= 0:
+		_route.append(Vector2i(cur2 % bw + x0, cur2 / bw + y0))
+		cur2 = from[cur2]
+	_route.reverse()
+	return _route
+
+
+func _brush_tiles(c: Vector2i) -> Array[Vector2i]:
+	var out: Array[Vector2i] = []
+	var r := int(ceil(brush))
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			if Vector2(dx, dy).length() <= brush:
+				out.append(c + Vector2i(dx, dy))
+	return out
+
+
 func _drag_tiles(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
+	if tool is String and tool == "switchback":
+		return _switchback(a, b)
 	if tool is int and tool in LINEAR:
 		return _line(a, b)
 	return _rect(a, b)
@@ -682,7 +844,10 @@ func _tile_ok(t: Vector2i) -> bool:
 	var i := World.ti(t)
 	if tool is int:
 		return world.can_build(tool, t) == ""
+	if tool in TERRA:
+		return world.can_terraform(t)
 	match tool:
+		"switchback": return world.can_build(D.B.TRAIL, t) == ""
 		"bulldoze": return world.build[i] != D.B.NONE and t != world.entry
 		"weed": return world.invasive[i] > 0.0 and world.inv_seen[i] == 1
 		"plant":
@@ -735,10 +900,12 @@ func _update_cursor() -> void:
 		ghost.visible = true
 	else:
 		var tiles: Array[Vector2i] = _drag_tiles(drag_start, hover) if dragging else ([hover] as Array[Vector2i])
+		if tool is String and tool in TERRA:
+			tiles = _brush_tiles(hover)
 		for t in tiles:
 			var ok := _tile_ok(t)
 			if World.inb(t.x, t.y):
-				_tile_quad(m, t, good_col if ok else bad_col, 0.09, 4)
+				_tile_quad(m, t, good_col if ok else bad_col, 0.09, 2 if tiles.size() > 30 else 4)
 			if ok:
 				good += 1
 				cost += world.cost_at(tool, t) if tool is int else int(D.TOOLS[tool].cost)
@@ -752,6 +919,13 @@ func _update_cursor() -> void:
 			text += "   Scenery here: %d%%" % int(world.scenic(hover) * 100.0)
 		elif tool == D.B.HIDE:
 			text += "   Wildlife here: %d%%" % int(game.eco.wildlife_score(hover) * 100.0)
+	elif tool is String and tool in TERRA:
+		text = "%s   Hold to shape the ground.  [ ]  brush size %.1f   Slope here: %d%%" % [def.name, brush, int(world.slope_at(hover) * 100.0)]
+	elif dragging and tool is String and tool == "switchback":
+		var steep := 0.0
+		for k in range(1, _route.size()):
+			steep = maxf(steep, absf(world.height[World.ti(_route[k])] - world.height[World.ti(_route[k - 1])]))
+		text += "  (%d tiles, steepest step %d%%)" % [good, int(steep * 100.0)]
 	elif dragging:
 		text += "  (%d tiles)" % good
 	else:
@@ -784,6 +958,12 @@ func _apply_drag() -> void:
 		else:
 			var done := false
 			match tool:
+				"switchback":
+					var why2 := game.try_build(D.B.TRAIL, t, true)
+					if why2 == "Not enough money":
+						game.say("Not enough money to finish the trail.", "warn")
+						break
+					done = why2 == ""
 				"bulldoze": done = game.bulldoze(t)
 				"plant": done = game.plant_tree(t)
 				"weed": done = game.weed(t)
@@ -926,6 +1106,22 @@ func _dev_hooks(args: Dictionary) -> void:
 		for k in steps:
 			game.step(0.066)
 		_report()
+	if args.has("terra"): # dx,dy from the entrance: raise a mound there, then level a pad beside it
+		var tc: PackedStringArray = args.terra.split(",")
+		var tt := world.entry + Vector2i(int(tc[0]), int(tc[1]))
+		for k in 30:
+			game.terraform(tt, "raise", 3.0, 0.0)
+		for k in 20:
+			game.terraform(tt + Vector2i(7, 0), "level", 2.5, world.height[World.ti(tt + Vector2i(7, 0))])
+	if args.has("switch"): # x0,y0,x1,y1 in tiles: lay a switchback trail
+		var sc: PackedStringArray = args["switch"].split(",")
+		tool = "switchback"
+		var route := _switchback(world.entry + Vector2i(int(sc[0]), int(sc[1])), world.entry + Vector2i(int(sc[2]), int(sc[3])))
+		print("switchback tiles ", route.size())
+		for t in route:
+			game.try_build(D.B.TRAIL, t, true)
+		tool = null
+		world.rebuild_nav()
 	if args.has("cam"): # tileX,tileY[,distance[,yawDegrees[,pitchDegrees]]]
 		var c: PackedStringArray = args.cam.split(",")
 		target = Vector3(float(c[0]), 0, float(c[1]))

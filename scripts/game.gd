@@ -351,6 +351,17 @@ func bulldoze(t: Vector2i) -> bool:
 	return true
 
 
+## One brush stroke of earthworks; charged per tile moved.
+func terraform(c: Vector2i, mode: String, radius: float, level_h: float) -> int:
+	var each: float = D.TOOLS[mode].cost
+	if money < each * 4.0:
+		return -1
+	var n := world.terraform(c, mode, radius, 0.22, level_h)
+	if n > 0:
+		add_money(-each * n * 0.25, "Construction")
+	return n
+
+
 func plant_tree(t: Vector2i) -> bool:
 	var i := World.ti(t)
 	var ter := world.terrain[i]
@@ -412,7 +423,7 @@ func save_game() -> bool:
 		research_total = research_total, techs = techs, safety = safety, ratings = ratings, total_visitors = total_visitors,
 		serious = serious_incidents, last_serious = last_serious_day, climate = climate, zone_weather = zone_weather,
 		zone_next = zone_next, zone_dry = zone_dry, discoveries = discoveries, comments = comments,
-		terrain = world.terrain, trees = world.trees, build = world.build, sid = world.sid, litter = world.litter,
+		terrain = world.terrain, height = world.height, trees = world.trees, build = world.build, sid = world.sid, litter = world.litter,
 		invasive = world.invasive, inv_seen = world.inv_seen, rare = world.rare, burned = world.burned,
 		footfall = world.footfall, structures = structs, next_sid = world.next_sid,
 		pops = eco.pops, know = eco.know, surveys = eco.surveys, staff = roles,
@@ -447,6 +458,8 @@ func load_game(d: Dictionary) -> void:
 	discoveries = d.discoveries
 	comments = d.comments
 	world.terrain = d.terrain
+	if d.has("height"):
+		world.height = d.height
 	world.trees = d.trees
 	world.build = d.build
 	world.sid = d.sid

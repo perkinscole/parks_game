@@ -201,7 +201,12 @@ func _update_group(gr: Group, dt: float) -> void:
 				else:
 					next_leg(gr)
 		S.WALK:
-			gr.dist += gr.speed * dt
+			# steep ground is slow going, uphill most of all
+			var here := World.tile_of(gr.pos_at(gr.dist))
+			var ahead := World.tile_of(gr.pos_at(gr.dist + D.TILE))
+			var climb: float = w.height[World.ti(ahead)] - w.height[World.ti(here)]
+			var pace := 1.0 / (1.0 + (2.4 if climb > 0.0 else 1.0) * maxf(0.0, absf(climb) - 0.15))
+			gr.dist += gr.speed * dt * maxf(pace, 0.22)
 			var t := World.tile_of(gr.pos_at(gr.dist))
 			if t != gr.last_tile:
 				gr.last_tile = t

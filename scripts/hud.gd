@@ -101,6 +101,7 @@ var tool_row: HBoxContainer
 var cat_buttons: Array[Button] = []
 var cat_index := 0
 var hint_label: Label
+var cam_orbit := Vector2.ZERO # held camera buttons: x turns, y tilts
 var side: PanelContainer
 var side_title: Label
 var side_body: VBoxContainer
@@ -313,6 +314,34 @@ func _build_top() -> void:
 	sys.add_child(quality_box)
 	sys.add_child(_round_button("+", "Zoom in (scroll, pinch, or the + key)", func(): menu_action.emit("zoom_in"), 36.0))
 	sys.add_child(_round_button("-", "Zoom out (scroll, pinch, or the - key)", func(): menu_action.emit("zoom_out"), 36.0))
+	sys.add_child(_round_button("?", "Show the controls", func(): menu_action.emit("help"), 36.0))
+	# camera pad: hold a button to turn or tilt the view
+	var pad := GridContainer.new()
+	pad.columns = 3
+	pad.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+	pad.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	pad.grow_vertical = Control.GROW_DIRECTION_BOTH
+	pad.offset_right = -10
+	pad.add_theme_constant_override("h_separation", 4)
+	pad.add_theme_constant_override("v_separation", 4)
+	root.add_child(pad)
+	var cells := [null, ["^", "Tilt up (R)", Vector2(0, 1)], null,
+		["<", "Turn left (Q, or right-drag / Alt-drag)", Vector2(-1, 0)], ["N", "Face north (Home)", Vector2.ZERO], [">", "Turn right (E)", Vector2(1, 0)],
+		null, ["v", "Tilt down (F)", Vector2(0, -1)], null]
+	for cell in cells:
+		if cell == null:
+			var gap := Control.new()
+			gap.custom_minimum_size = Vector2(34, 34)
+			gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			pad.add_child(gap)
+			continue
+		var dirv: Vector2 = cell[2]
+		var cb := _round_button(cell[0], cell[1], func(): if dirv == Vector2.ZERO: menu_action.emit("north"), 34.0)
+		cb.add_theme_font_size_override("font_size", 16)
+		if dirv != Vector2.ZERO:
+			cb.button_down.connect(func(): cam_orbit = dirv)
+			cb.button_up.connect(func(): cam_orbit = Vector2.ZERO)
+		pad.add_child(cb)
 	var save := _button("Save", func(): menu_action.emit("save"), "Save the park (it also saves by itself every morning)")
 	sys.add_child(save)
 	sys.add_child(_button("Menu", func(): menu_action.emit("menu"), "Save and return to the main menu"))

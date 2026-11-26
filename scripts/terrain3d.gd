@@ -66,6 +66,12 @@ var _region_nodes := {}
 var _ghosted := false
 var _cards := {}
 var _struct_nodes := {}
+var _chunks := {}
+var _th := PackedFloat32Array()
+var _chs := PackedFloat32Array()
+var _tmp := PackedFloat32Array()
+var _lakes: MeshInstance3D
+var falls_mat: ShaderMaterial
 var _lights: Array[OmniLight3D] = []
 var _orchid_tiles: Array[Vector2i] = []
 var _outer_trees: Array = []
@@ -136,6 +142,9 @@ func setup(w: World, f: Font) -> void:
 	water_mat = ShaderMaterial.new()
 	water_mat.shader = load("res://shaders/water.gdshader")
 	water_mat.set_shader_parameter("noise_tex", nz)
+	falls_mat = ShaderMaterial.new()
+	falls_mat.shader = load("res://shaders/falls.gdshader")
+	falls_mat.set_shader_parameter("noise_tex", nz)
 	ground.set_shader_parameter("map_size", Vector2(World.W, World.H))
 
 	for cy in range(0, ceili(World.H / float(CH))):
@@ -144,6 +153,7 @@ func setup(w: World, f: Font) -> void:
 			mi.mesh = _terrain_mesh(cx, cy)
 			mi.material_override = ground
 			add_child(mi)
+			_chunks[Vector2i(cx, cy)] = mi
 	var outer := MeshInstance3D.new()
 	outer.mesh = _outskirts_mesh()
 	outer.material_override = ground
@@ -226,6 +236,7 @@ func setup(w: World, f: Font) -> void:
 	_build_landmarks()
 	_build_entrance_marker()
 	world.changed.connect(_on_changed)
+	world.reshaped.connect(_on_reshaped)
 	# build everything up front so the first frame is complete
 	while not _veg_dirty.is_empty():
 		_process(0.0)
@@ -340,51 +351,88 @@ static func _cr(p0: float, p1: float, p2: float, p3: float, t: float) -> float:
 	return 0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t * t * t)
 
 
-func _compute_heights() -> void:
+func _compute_heights(x0: int = 0, y0: int = 0, x1: int = World.W - 1, y1: int = World.H - 1) -> void:
 	var n := World.W * World.H
-	var th := PackedFloat32Array()
-	th.resize(n)
-	for i in n:
-		var h := world.height[i]
-		var wl := world.wlevel[i]
-		if wl != World.NO_WATER:
-			h = minf(h, wl - 0.3)
-		th[i] = h
-	# tile corners
 	var cw := World.W + 1
-	var ch := PackedFloat32Array()
-	ch.resize(cw * (World.H + 1))
-	for y in World.H + 1:
-		for x in cw:
-			var x0 := clampi(x - 1, 0, World.W - 1)
-			var x1 := clampi(x, 0, World.W - 1)
-			var y0 := clampi(y - 1, 0, World.H - 1)
-			var y1 := clampi(y, 0, World.H - 1)
-			ch[y * cw + x] = (th[y0 * World.W + x0] + th[y0 * World.W + x1] + th[y1 * World.W + x0] + th[y1 * World.W + x1]) * 0.25
+	if _th.size() != n:
+		_th.resize(n)
+		_chs.resize(cw * (World.H + 1))
+		_tmp.resize(GW * (World.H + 1))
+		hf.resize(GW * GH)
+	x0 = clampi(x0, 0, World.W - 1)
+	y0 = clampi(y0, 0, World.H - 1)
+	x1 = clampi(x1, 0, World.W - 1)
+	y1 = clampi(y1, 0, World.H - 1)
+	for y in range(y0, y1 + 1):
+		for x in range(x0, x1 + 1):
+			var i := y * World.W + x
+			var h := world.height[i]
+			var wl := world.wlevel[i]
+			if wl != World.NO_WATER:
+				h = minf(h, wl - 0.3)
+			_th[i] = h
+	# tile corners
+	for y in range(y0, y1 + 2):
+		for x in range(x0, x1 + 2):
+			var xa := clampi(x - 1, 0, World.W - 1)
+			var xb := clampi(x, 0, World.W - 1)
+			var ya := clampi(y - 1, 0, World.H - 1)
+			var yb := clampi(y, 0, World.H - 1)
+			_chs[y * cw + x] = (_th[ya * World.W + xa] + _th[ya * World.W + xb] + _th[yb * World.W + xa] + _th[yb * World.W + xb]) * 0.25
 	# smooth interpolation: along X, then along Z
-	var tmp := PackedFloat32Array()
-	tmp.resize(GW * (World.H + 1))
-	for y in World.H + 1:
+	var gxa := maxi(0, (x0 - 2) * SUB)
+	var gxb := mini(GW - 1, (x1 + 3) * SUB)
+	for y in range(y0, y1 + 2):
 		var row := y * cw
-		for gx in GW:
+		for gx in range(gxa, gxb + 1):
 			var i := mini(gx / SUB, World.W - 1)
 			var t := float(gx - i * SUB) / SUB
-			tmp[y * GW + gx] = _cr(ch[row + maxi(i - 1, 0)], ch[row + i], ch[row + i + 1], ch[row + mini(i + 2, World.W)], t)
-	hf.resize(GW * GH)
+			_tmp[y * GW + gx] = _cr(_chs[row + maxi(i - 1, 0)], _chs[row + i], _chs[row + i + 1], _chs[row + mini(i + 2, World.W)], t)
 	var inv := 1.0 / SUB
-	for gy in GH:
+	for gy in range(maxi(0, (y0 - 2) * SUB), mini(GH - 1, (y1 + 3) * SUB) + 1):
 		var j := mini(gy / SUB, World.H - 1)
 		var t := float(gy - j * SUB) / SUB
 		var r0 := maxi(j - 1, 0) * GW
 		var r1 := j * GW
 		var r2 := (j + 1) * GW
 		var r3 := mini(j + 2, World.H) * GW
-		for gx in GW:
-			var h := _cr(tmp[r0 + gx], tmp[r1 + gx], tmp[r2 + gx], tmp[r3 + gx], t)
+		for gx in range(gxa, gxb + 1):
+			var h := _cr(_tmp[r0 + gx], _tmp[r1 + gx], _tmp[r2 + gx], _tmp[r3 + gx], t)
 			if h > 9.0:
 				# craggy detail on high ground
 				h += detail.get_noise_2d(gx * inv * 2.2, gy * inv * 2.2) * clampf((h - 9.0) * 0.12, 0.0, 1.0)
 			hf[gy * GW + gx] = h
+
+
+## Earthworks: re-shape just the ground that moved and whatever stands on it.
+func _on_reshaped(rect: Rect2i) -> void:
+	var x0 := rect.position.x
+	var y0 := rect.position.y
+	var x1 := rect.end.x - 1
+	var y1 := rect.end.y - 1
+	_compute_heights(x0, y0, x1, y1)
+	for cy in range(maxi(0, y0 - 3) / CH, mini(World.H - 1, y1 + 3) / CH + 1):
+		for cx in range(maxi(0, x0 - 3) / CH, mini(World.W - 1, x1 + 3) / CH + 1):
+			if _chunks.has(Vector2i(cx, cy)):
+				_chunks[Vector2i(cx, cy)].mesh = _terrain_mesh(cx, cy)
+	for ry in range(maxi(0, y0 - 3) / REG, mini(World.H - 1, y1 + 3) / REG + 1):
+		for rx in range(maxi(0, x0 - 3) / REG, mini(World.W - 1, x1 + 3) / REG + 1):
+			_veg_dirty[Vector2i(rx, ry)] = true
+	# buildings on the moved ground are set down again at the new height
+	for id in _struct_nodes.keys():
+		if world.structures.has(id):
+			var s: Dictionary = world.structures[id]
+			if Rect2i(x0 - 3, y0 - 3, x1 - x0 + 7, y1 - y0 + 7).has_point(s.tile):
+				var old: Node3D = _struct_nodes[id]
+				for c in old.get_children():
+					if c is OmniLight3D:
+						_lights.erase(c)
+				old.queue_free()
+				_struct_nodes.erase(id)
+	_struct_dirty = true
+	_deck_dirty = true
+	_small_dirty = true
+	_tile_dirty = true
 
 
 func _h(gx: int, gy: int) -> float:
@@ -1283,6 +1331,83 @@ func _landmark_rocks(kind: String, pos: Vector3, width: float) -> void:
 		add_child(mi)
 
 
+## A waterfall is part of the land: the river pours over the rock step that
+## the world generator raised, as a sheet of moving water laid on the cliff.
+func _build_falls(lm: Dictionary, pos: Vector3) -> void:
+	var up: Vector2 = lm.get("dir", Vector2(0, -1))
+	var side := Vector2(-up.y, up.x)
+	var verts := PackedVector3Array()
+	var norms := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var uv2 := PackedVector2Array()
+	var idx := PackedInt32Array()
+	var steps := 44
+	var prev_y := 1e9
+	for k in steps + 1:
+		var f := float(k) / steps
+		var along := lerpf(2.6, -2.4, f) # from above the lip to the pool
+		var c := Vector2(pos.x, pos.z) + up * along
+		var wide := lerpf(0.42, 0.6, f)
+		var cy := maxf(height_at(c.x, c.y), maxf(height_at(c.x + side.x * wide, c.y + side.y * wide), height_at(c.x - side.x * wide, c.y - side.y * wide)))
+		cy = minf(cy + 0.1, prev_y) # water never runs uphill
+		var steep := clampf((prev_y - cy) * 4.0, 0.0, 1.0) if k > 0 else 0.0
+		prev_y = cy
+		for sgn in [-1.0, 1.0]:
+			var p: Vector2 = c + side * wide * float(sgn)
+			# the sheet stands a little proud of the rock where it falls free
+			verts.append(Vector3(p.x - up.x * 0.12 * steep, cy, p.y - up.y * 0.12 * steep))
+			norms.append(Vector3(-up.x * steep, 1.0 - steep * 0.6, -up.y * steep).normalized())
+			uvs.append(Vector2(0.0 if float(sgn) < 0.0 else 1.0, f * 6.0 if f < 0.999 else 6.0))
+			uv2.append(Vector2(steep, 0.0))
+		if k > 0:
+			var a := (k - 1) * 2
+			idx.append_array([a, a + 1, a + 3, a, a + 3, a + 2])
+	for k in uvs.size():
+		uvs[k].y /= 6.0
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_NORMAL] = norms
+	arr[Mesh.ARRAY_TEX_UV] = uvs
+	arr[Mesh.ARRAY_TEX_UV2] = uv2
+	arr[Mesh.ARRAY_INDEX] = idx
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	mi.material_override = falls_mat
+	add_child(mi)
+	# spray hanging over the plunge pool
+	var foot := Vector2(pos.x, pos.z) - up * 1.3
+	var mist := GPUParticles3D.new()
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	pm.emission_sphere_radius = 0.5
+	pm.direction = Vector3(-up.x, 1.2, -up.y)
+	pm.spread = 35.0
+	pm.initial_velocity_min = 0.2
+	pm.initial_velocity_max = 0.7
+	pm.gravity = Vector3(0, -0.15, 0)
+	pm.scale_min = 0.5
+	pm.scale_max = 1.3
+	mist.process_material = pm
+	mist.amount = 26
+	mist.lifetime = 2.6
+	var puff := QuadMesh.new()
+	puff.size = Vector2(0.7, 0.7)
+	var pmat := StandardMaterial3D.new()
+	pmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	pmat.albedo_color = Color(1, 1, 1, 0.13)
+	pmat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	pmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	puff.material = pmat
+	mist.draw_pass_1 = puff
+	mist.position = Vector3(foot.x, height_at(foot.x, foot.y) + 0.4, foot.y)
+	mist.visibility_range_end = 120.0
+	add_child(mist)
+	_landmark_rocks("falls", Vector3(foot.x, pos.y, foot.y), 2.6)
+
+
 func _build_landmarks() -> void:
 	# target width (in tiles) for each landmark model, and how high its name floats
 	var spec := {"falls": [4.2, 6.0], "spring": [2.6, 2.2], "arch": [3.6, 5.0], "summit": [0.9, 2.4], "grove": [0.0, 9.5], "lake": [0.0, 1.5]}
@@ -1305,6 +1430,8 @@ func _build_landmarks() -> void:
 				tree.rotation.y = k * 1.7
 				tree.scale = Vector3.ONE * (3.6 - (k % 3) * 0.5)
 				add_child(tree)
+		elif lm.kind == "falls":
+			_build_falls(lm, pos)
 		elif lm.kind != "lake":
 			var mi := MeshInstance3D.new()
 			var ext := Models.external("lm_" + str(lm.kind))

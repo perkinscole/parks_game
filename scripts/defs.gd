@@ -58,16 +58,22 @@ const BUILD := {
 }
 
 const CATEGORIES := [
-	{id = "paths", name = "Roads & Trails", tools = [B.ROAD, B.TRAIL, B.PARKING, B.GATE]},
+	{id = "paths", name = "Roads & Trails", tools = [B.ROAD, B.TRAIL, "switchback", B.PARKING, B.GATE]},
 	{id = "facilities", name = "Facilities", tools = [B.VISITOR_CENTER, B.RESTROOM, B.BIN, B.SNACK, B.SIGN, B.TRAILHEAD]},
 	{id = "attractions", name = "Attractions", tools = [B.OVERLOOK, B.PICNIC, B.CAMP, B.CRAG, B.HIDE]},
 	{id = "ops", name = "Operations", tools = [B.RANGER, B.RESEARCH]},
 	{id = "land", name = "Land", tools = ["bulldoze", "plant", "weed"]},
+	{id = "terrain", name = "Terrain", tools = ["raise", "lower", "level", "smooth"]},
 ]
 
 const TOOLS := {
 	"bulldoze": {name = "Demolish", cost = 10, desc = "Remove roads, trails and buildings. Drag an area. $10 per tile."},
 	"plant": {name = "Plant Native Trees", cost = 25, desc = "Restore habitat by planting trees on open land. Drag an area. Requires Native Restoration research."},
+	"switchback": {name = "Switchback Trail", cost = 12, desc = "Drag from the bottom of a slope to the top: the trail finds its own zigzag route up at a gentle grade. Hikers crawl up steep trails and avoid them."},
+	"raise": {name = "Raise Land", cost = 15, desc = "Hold to push the ground up under the brush. [ and ] change the brush size. Earthworks disturb the soil and wildlife nearby."},
+	"lower": {name = "Lower Land", cost = 15, desc = "Hold to dig the ground down under the brush. [ and ] change the brush size."},
+	"level": {name = "Level Land", cost = 15, desc = "Hold and drag to flatten ground to the height where you started. Good for building pads and road beds."},
+	"smooth": {name = "Smooth Land", cost = 10, desc = "Hold to soften bumps and blend slopes into each other."},
 	"weed": {name = "Remove Invasives", cost = 40, desc = "Send a contract crew to clear invasive plants from tiles. Drag an area. Ecologists do this for free."},
 }
 

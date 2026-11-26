@@ -3,6 +3,7 @@ extends RefCounted
 ## The land itself: terrain, everything built on it, and the derived
 ## ecological fields (disturbance, habitat quality, scenery).
 
+signal reshaped(rect: Rect2i)
 signal changed(rect: Rect2i)
 
 const W := D.MAP_W
@@ -325,7 +326,7 @@ func _place_entry() -> void:
 
 ## A waterfall needs something to fall from: lifts the ground upstream of the
 ## tile into a rock step and scoops a plunge basin below it.
-func _raise_bluff(tile: Vector2i) -> void:
+func _raise_bluff(tile: Vector2i) -> Vector2:
 	var c := height[ti(tile)]
 	var up := Vector2.ZERO
 	for dy in range(-3, 4):
@@ -333,6 +334,17 @@ func _raise_bluff(tile: Vector2i) -> void:
 			var q := tile + Vector2i(dx, dy)
 			if (dx != 0 or dy != 0) and inb(q.x, q.y):
 				up += Vector2(dx, dy).normalized() * (height[ti(q)] - c)
+	# better still, follow the river itself: upstream is where its water stands higher
+	var flow := Vector2.ZERO
+	var wc := wlevel[ti(tile)]
+	if wc != NO_WATER:
+		for dy in range(-3, 4):
+			for dx in range(-3, 4):
+				var q := tile + Vector2i(dx, dy)
+				if (dx != 0 or dy != 0) and inb(q.x, q.y) and wlevel[ti(q)] != NO_WATER:
+					flow += Vector2(dx, dy).normalized() * (wlevel[ti(q)] - wc)
+	if flow.length() > 0.05:
+		up = flow
 	if up.length() < 0.01:
 		up = Vector2(0, -1)
 	up = up.normalized()
@@ -344,7 +356,7 @@ func _raise_bluff(tile: Vector2i) -> void:
 			var off := Vector2(dx, dy)
 			var along := off.dot(up)
 			var fall := 1.0 - smoothstep(2.5, 6.5, off.length())
-			var lift := (2.6 * smoothstep(-0.2, 1.4, along) - 0.5 * (1.0 - smoothstep(0.0, 2.5, off.length()))) * fall
+			var lift := (4.4 * smoothstep(-0.1, 1.0, along) - 0.6 * (1.0 - smoothstep(0.0, 2.5, off.length())) * (1.0 - smoothstep(-0.5, 0.5, along))) * fall
 			var j := ti(q)
 			height[j] += lift
 			if wlevel[j] != NO_WATER:
@@ -352,6 +364,7 @@ func _raise_bluff(tile: Vector2i) -> void:
 			elif lift > 1.2 and terrain[j] != D.T.PEAK and build[j] == D.B.NONE:
 				terrain[j] = D.T.ROCK
 				trees[j] = 0
+	return up
 
 
 func _add_landmark(kind: String, tile: Vector2i) -> void:
@@ -360,7 +373,7 @@ func _add_landmark(kind: String, tile: Vector2i) -> void:
 	landmarks.append(lm)
 	landmark_at[ti(tile)] = lm
 	if kind == "falls":
-		_raise_bluff(tile)
+		lm.dir = _raise_bluff(tile)
 	elif kind == "arch" or kind == "spring":
 		# level ground for it to stand on
 		var avg := 0.0
@@ -736,6 +749,64 @@ func count_kind(kind: int) -> int:
 	return c
 
 
+## Steepest step from this tile to a neighbour, in height units per tile.
+func slope_at(t: Vector2i) -> float:
+	var h := height[ti(t)]
+	var s := 0.0
+	for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+		if inb(t.x + d.x, t.y + d.y):
+			s = maxf(s, absf(height[idx(t.x + d.x, t.y + d.y)] - h))
+	return s
+
+
+func can_terraform(t: Vector2i) -> bool:
+	if t.x < 2 or t.y < 2 or t.x >= W - 2 or t.y >= H - 2:
+		return false
+	var i := ti(t)
+	if wlevel[i] != NO_WATER or landmark_at.has(i):
+		return false
+	return absi(t.x - entry.x) > 1 or absi(t.y - entry.y) > 3
+
+
+## Earthworks under a round brush. Returns how many tiles moved.
+func terraform(c: Vector2i, mode: String, radius: float, amount: float, level_h: float) -> int:
+	var r := int(ceil(radius))
+	var next := {}
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			var t := c + Vector2i(dx, dy)
+			var d := Vector2(dx, dy).length()
+			if d > radius or not inb(t.x, t.y) or not can_terraform(t):
+				continue
+			var i := ti(t)
+			var w := 1.0 - smoothstep(radius * 0.35, radius + 0.01, d)
+			var h := height[i]
+			match mode:
+				"raise": h += amount * w
+				"lower": h -= amount * w
+				"level": h = lerpf(h, level_h, minf(1.0, 0.45 * (0.4 + w)))
+				"smooth":
+					var avg := 0.0
+					for n in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+						avg += height[ti(t + n)] * 0.25
+					h = lerpf(h, avg, 0.5 * (0.4 + w))
+			# never dig below the water next door, or the sea
+			var floor_h := 0.9
+			for n in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var wl := wlevel[ti(t + n)]
+				if wl != NO_WATER:
+					floor_h = maxf(floor_h, wl + 0.12)
+			h = clampf(h, floor_h, 60.0)
+			if absf(h - height[i]) > 0.004:
+				next[i] = h
+	for i: int in next:
+		height[i] = next[i]
+		disturb[i] = minf(1.0, disturb[i] + 0.25)
+	if not next.is_empty():
+		reshaped.emit(Rect2i(c.x - r, c.y - r, r * 2 + 1, r * 2 + 1))
+	return next.size()
+
+
 func rebuild_nav() -> void:
 	nav_version += 1
 	_dist_cache.clear()
@@ -764,7 +835,8 @@ func rebuild_nav() -> void:
 			var is_walk := is_car or b == D.B.TRAIL
 			walk_nav.set_point_solid(t, not is_walk)
 			if is_walk:
-				walk_nav.set_point_weight_scale(t, 1.0 if b == D.B.TRAIL else (1.4 if b == D.B.PARKING else 2.2))
+				# steep going costs more, so people choose the switchbacks when there are some
+				walk_nav.set_point_weight_scale(t, (1.0 if b == D.B.TRAIL else (1.4 if b == D.B.PARKING else 2.2)) * (1.0 + 2.0 * maxf(0.0, slope_at(t) - 0.3)))
 			var staff_ok := is_walk or not is_water(ter)
 			staff_nav.set_point_solid(t, not staff_ok)
 			if staff_ok:

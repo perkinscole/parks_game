@@ -209,6 +209,26 @@ static func structure(ci: CanvasItem, kind, r: Rect2) -> void:
 			circ(ci, r, 0.3, 0.78, 0.06, Color("8a8e96"))
 			circ(ci, r, 0.52, 0.78, 0.06, Color("8a8e96"))
 			circ(ci, r, 0.74, 0.78, 0.06, Color("8a8e96"))
+		"raise", "lower", "level", "smooth":
+			var hill := [0.06, 0.86, 0.3, 0.5, 0.5, 0.36, 0.7, 0.5, 0.94, 0.86]
+			if kind == "lower": hill = [0.06, 0.5, 0.3, 0.56, 0.5, 0.82, 0.7, 0.56, 0.94, 0.5, 0.94, 0.9, 0.06, 0.9]
+			elif kind == "level": hill = [0.06, 0.86, 0.2, 0.58, 0.8, 0.58, 0.94, 0.86]
+			elif kind == "smooth": hill = [0.06, 0.86, 0.2, 0.66, 0.4, 0.56, 0.6, 0.56, 0.8, 0.66, 0.94, 0.86]
+			poly(ci, r, hill, Color("7d9a4f"))
+			box(ci, r, 0.06, 0.84, 0.94, 0.92, Color("7d5230"))
+			if kind == "raise":
+				poly(ci, r, [0.5, 0.06, 0.64, 0.24, 0.36, 0.24], Color("f6d44d"))
+				box(ci, r, 0.46, 0.22, 0.54, 0.34, Color("f6d44d"))
+			elif kind == "lower":
+				poly(ci, r, [0.5, 0.44, 0.64, 0.26, 0.36, 0.26], Color("f6d44d"))
+				box(ci, r, 0.46, 0.12, 0.54, 0.28, Color("f6d44d"))
+			elif kind == "level":
+				line(ci, r, 0.1, 0.42, 0.9, 0.42, Color("f6d44d"), 0.06)
+			else:
+				ci.draw_polyline(PackedVector2Array([P(r, 0.12, 0.4), P(r, 0.32, 0.28), P(r, 0.5, 0.36), P(r, 0.68, 0.28), P(r, 0.88, 0.4)]), Color("f6d44d"), r.size.x * 0.05)
+		"switchback":
+			poly(ci, r, [0.06, 0.9, 0.5, 0.12, 0.94, 0.9], Color("7d9a4f"))
+			ci.draw_polyline(PackedVector2Array([P(r, 0.24, 0.86), P(r, 0.72, 0.74), P(r, 0.34, 0.6), P(r, 0.62, 0.46), P(r, 0.44, 0.34), P(r, 0.5, 0.2)]), Color("e8d3a0"), r.size.x * 0.06)
 		"plant":
 			ellipse(ci, P(r, 0.5, 0.86), r.size.x * 0.32, r.size.y * 0.08, Color("7d5230"))
 			box(ci, r, 0.47, 0.45, 0.53, 0.86, WOOD_D)
