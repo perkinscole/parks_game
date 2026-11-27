@@ -29,6 +29,8 @@ class Glyph extends Control:
 			draw_circle(size * 0.5, size.x * 0.5, Color("2c4658") if kind.begins_with("face") or kind == "ranger" or kind == "people" else Color(0.16, 0.26, 0.2, 0.9))
 			draw_texture_rect(Icons.pic[kind], r, false)
 			return
+		if Art.glyph(self, kind, r):
+			return
 		match kind:
 			"coin":
 				Art.circ(self, r, 0.5, 0.5, 0.45, Color("e0a82e"))

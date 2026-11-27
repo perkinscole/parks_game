@@ -55,6 +55,8 @@ static func leaf_colors(season: int, h: float) -> Array:
 
 
 static func structure(ci: CanvasItem, kind, r: Rect2) -> void:
+	if icon(ci, kind, r):
+		return
 	match kind:
 		D.B.ROAD:
 			box(ci, r, 0.0, 0.25, 1.0, 0.75, ASPHALT)
@@ -257,3 +259,287 @@ static func invasive_plant(ci: CanvasItem, base: Vector2, s: float) -> void:
 	ci.draw_line(base + Vector2(0, -3.0 * s), base + Vector2(4.0 * s, -5.5 * s), Color("4d6b2f"), 1.4 * s)
 	ci.draw_circle(base + Vector2(0, -10.0 * s), 3.2 * s, Color("8e3fa8"))
 	ci.draw_circle(base + Vector2(-0.8 * s, -10.8 * s), 1.5 * s, Color("c77fe0"))
+
+
+# ------------------------------------------------------- detailed drawn icons
+
+## A quad shaded from one colour at the top to another at the bottom.
+static func grad(ci: CanvasItem, r: Rect2, uv: Array, top: Color, bottom: Color) -> void:
+	var pts := PackedVector2Array()
+	var cols := PackedColorArray()
+	var v0 := 1e9
+	var v1 := -1e9
+	for i in range(0, uv.size(), 2):
+		v0 = minf(v0, uv[i + 1])
+		v1 = maxf(v1, uv[i + 1])
+	for i in range(0, uv.size(), 2):
+		pts.append(P(r, uv[i], uv[i + 1]))
+		cols.append(top.lerp(bottom, (uv[i + 1] - v0) / maxf(v1 - v0, 0.001)))
+	ci.draw_polygon(pts, cols)
+
+
+static func outline(ci: CanvasItem, r: Rect2, uv: Array, col: Color, wd: float) -> void:
+	var pts := PackedVector2Array()
+	for i in range(0, uv.size(), 2):
+		pts.append(P(r, uv[i], uv[i + 1]))
+	pts.append(pts[0])
+	ci.draw_polyline(pts, col, r.size.x * wd, true)
+
+
+static func curve(ci: CanvasItem, r: Rect2, uv: Array, col: Color, wd: float) -> void:
+	var pts := PackedVector2Array()
+	for i in range(0, uv.size(), 2):
+		pts.append(P(r, uv[i], uv[i + 1]))
+	ci.draw_polyline(pts, col, r.size.x * wd, true)
+
+
+static func tuft(ci: CanvasItem, r: Rect2, u: float, v: float, s: float, col: Color) -> void:
+	for k in 3:
+		line(ci, r, u, v, u + (k - 1) * 0.035 * s, v - 0.09 * s, col, 0.022)
+
+
+static func arrow(ci: CanvasItem, r: Rect2, u: float, v: float, up: bool) -> void:
+	var d := -1.0 if up else 1.0
+	var head := [u, v + d * 0.17, u - 0.13, v, u + 0.13, v]
+	var shaft := [u - 0.05, v, u + 0.05, v, u + 0.05, v - d * 0.15, u - 0.05, v - d * 0.15]
+	poly(ci, r, [u, v + d * 0.2, u - 0.16, v - 0.01 * d, u + 0.16, v - 0.01 * d], Color("5a3d08"))
+	poly(ci, r, [u - 0.075, v, u + 0.075, v, u + 0.075, v - d * 0.175, u - 0.075, v - d * 0.175], Color("5a3d08"))
+	poly(ci, r, head, Color("ffd84a"))
+	poly(ci, r, shaft, Color("ffd84a"))
+
+
+## Build-menu pictures for things that have no 3D model. Returns false for
+## anything it does not draw.
+static func icon(ci: CanvasItem, kind, r: Rect2) -> bool:
+	var S := r.size.x
+	if kind is int:
+		match kind:
+			D.B.ROAD:
+				grad(ci, r, [0.36, 0.34, 0.64, 0.34, 0.98, 1.0, 0.02, 1.0], Color("4a4e58"), Color("6a6f7a"))
+				line(ci, r, 0.36, 0.34, 0.02, 1.0, Color("e9e4d2"), 0.03)
+				line(ci, r, 0.64, 0.34, 0.98, 1.0, Color("e9e4d2"), 0.03)
+				for k in 4:
+					var v0 := 0.4 + k * 0.16
+					var w := 0.012 + k * 0.008
+					poly(ci, r, [0.5 - w, v0, 0.5 + w, v0, 0.5 + w * 1.4, v0 + 0.09, 0.5 - w * 1.4, v0 + 0.09], Color("f4d35e"))
+				tuft(ci, r, 0.12, 0.7, 1.0, Color("3f7a3a"))
+				tuft(ci, r, 0.88, 0.62, 0.8, Color("3f7a3a"))
+				return true
+			D.B.TRAIL:
+				var edge := [0.3, 1.0, 0.62, 1.0, 0.7, 0.8, 0.46, 0.62, 0.66, 0.44, 0.6, 0.3, 0.52, 0.3, 0.5, 0.42, 0.28, 0.6, 0.42, 0.82]
+				poly(ci, r, edge, Color("8a6a3f"))
+				grad(ci, r, [0.34, 1.0, 0.58, 1.0, 0.66, 0.81, 0.42, 0.62, 0.62, 0.44, 0.58, 0.32, 0.54, 0.32, 0.53, 0.43, 0.32, 0.61, 0.46, 0.82], Color("c9a871"), Color("e6cc98"))
+				for p in [[0.48, 0.9], [0.5, 0.72], [0.44, 0.58], [0.56, 0.4]]:
+					circ(ci, r, p[0], p[1], 0.018, Color("8a6a3f"))
+				box(ci, r, 0.76, 0.5, 0.8, 0.86, WOOD_D)
+				poly(ci, r, [0.66, 0.5, 0.92, 0.5, 0.97, 0.56, 0.92, 0.62, 0.66, 0.62], WOOD)
+				line(ci, r, 0.7, 0.56, 0.9, 0.56, Color("fbf1d8"), 0.02)
+				tuft(ci, r, 0.2, 0.86, 1.0, Color("3f7a3a"))
+				tuft(ci, r, 0.82, 0.96, 0.9, Color("3f7a3a"))
+				return true
+			D.B.PARKING:
+				grad(ci, r, [0.2, 0.36, 0.8, 0.36, 0.98, 0.98, 0.02, 0.98], Color("585c66"), Color("747985"))
+				for k in 4:
+					var t := k / 3.0
+					line(ci, r, lerpf(0.26, 0.74, t), 0.4, lerpf(0.1, 0.9, t), 0.94, Color("eeeeee"), 0.02)
+				# two parked cars, seen from behind
+				for car in [[0.36, Color("c94a40")], [0.63, Color("3f79c4")]]:
+					var cx: float = car[0]
+					var cc: Color = car[1]
+					poly(ci, r, [cx - 0.1, 0.84, cx + 0.1, 0.84, cx + 0.09, 0.62, cx - 0.09, 0.62], cc)
+					poly(ci, r, [cx - 0.075, 0.62, cx + 0.075, 0.62, cx + 0.055, 0.5, cx - 0.055, 0.5], cc.darkened(0.2))
+					poly(ci, r, [cx - 0.058, 0.6, cx + 0.058, 0.6, cx + 0.044, 0.52, cx - 0.044, 0.52], Color("bfe3f5"))
+					box(ci, r, cx - 0.09, 0.7, cx - 0.05, 0.74, Color("ffd9a0"))
+					box(ci, r, cx + 0.05, 0.7, cx + 0.09, 0.74, Color("ffd9a0"))
+					box(ci, r, cx - 0.1, 0.84, cx - 0.05, 0.9, Color("22252b"))
+					box(ci, r, cx + 0.05, 0.84, cx + 0.1, 0.9, Color("22252b"))
+				box(ci, r, 0.86, 0.2, 0.89, 0.5, Color("7b7f87"))
+				box(ci, r, 0.78, 0.06, 0.97, 0.25, Color("2f6fd0"))
+				line(ci, r, 0.84, 0.21, 0.84, 0.1, Color.WHITE, 0.03)
+				curve(ci, r, [0.84, 0.1, 0.91, 0.1, 0.92, 0.15, 0.84, 0.16], Color.WHITE, 0.03)
+				return true
+		return false
+	match kind:
+		"path":
+			# a faint track that the grass is already taking back
+			for seg in [[0.36, 0.98, 0.44, 0.84], [0.47, 0.78, 0.4, 0.66], [0.38, 0.6, 0.5, 0.5], [0.54, 0.46, 0.6, 0.36]]:
+				line(ci, r, seg[0], seg[1], seg[2], seg[3], Color("a58a5c"), 0.05)
+			for p in [[0.2, 0.9], [0.56, 0.9], [0.3, 0.72], [0.6, 0.66], [0.26, 0.5], [0.68, 0.5], [0.46, 0.92], [0.44, 0.58]]:
+				tuft(ci, r, p[0], p[1], 1.0, Color("2f6a33"))
+			for p in [[0.4, 0.9], [0.46, 0.72], [0.44, 0.56]]:
+				ellipse(ci, P(r, p[0], p[1]), S * 0.022, S * 0.034, Color("6f5836"))
+			box(ci, r, 0.74, 0.62, 0.77, 0.9, WOOD_D)
+			box(ci, r, 0.68, 0.56, 0.83, 0.66, Color("c9b27c"))
+			line(ci, r, 0.71, 0.61, 0.8, 0.61, Color("7d5230"), 0.015)
+		"steps":
+			grad(ci, r, [0.0, 1.0, 0.0, 0.8, 1.0, 0.26, 1.0, 1.0], Color("5d8a46"), Color("47703a"))
+			for k in 5:
+				var u := 0.12 + k * 0.15
+				var v := 0.84 - k * 0.12
+				box(ci, r, u, v, u + 0.3, v + 0.045, Color("d8d2c2"))
+				box(ci, r, u, v + 0.045, u + 0.3, v + 0.12, Color("8f897b"))
+				line(ci, r, u + 0.1, v + 0.05, u + 0.1, v + 0.12, Color("6c675c"), 0.012)
+				line(ci, r, u + 0.21, v + 0.05, u + 0.21, v + 0.12, Color("6c675c"), 0.012)
+			for k in 3:
+				var pu := 0.5 + k * 0.2
+				var pv := 0.72 - k * 0.16
+				box(ci, r, pu, pv - 0.2, pu + 0.03, pv + 0.02, WOOD_D)
+			line(ci, r, 0.5, 0.53, 0.93, 0.2, WOOD, 0.035)
+		"switchback":
+			grad(ci, r, [0.5, 0.1, 0.98, 0.98, 0.02, 0.98], Color("8fae6a"), Color("4f7a3d"))
+			poly(ci, r, [0.5, 0.1, 0.62, 0.32, 0.5, 0.28, 0.4, 0.33], Color("f1f4f6"))
+			poly(ci, r, [0.5, 0.1, 0.98, 0.98, 0.6, 0.98, 0.56, 0.5], Color(0, 0, 0, 0.14))
+			var zig := [0.2, 0.92, 0.76, 0.82, 0.3, 0.7, 0.68, 0.6, 0.38, 0.5, 0.58, 0.42, 0.48, 0.34]
+			curve(ci, r, zig, Color("6f5836"), 0.075)
+			curve(ci, r, zig, Color("e6cc98"), 0.045)
+			circ(ci, r, 0.3, 0.7, 0.03, Color("d9534f"))
+		"bulldoze":
+			ellipse(ci, P(r, 0.5, 0.92), S * 0.42, S * 0.05, Color(0, 0, 0, 0.25))
+			grad(ci, r, [0.3, 0.46, 0.84, 0.46, 0.84, 0.72, 0.3, 0.72], Color("ffcf4a"), Color("d99a1c"))
+			grad(ci, r, [0.5, 0.2, 0.78, 0.2, 0.78, 0.48, 0.5, 0.48], Color("ffd65e"), Color("e0a528"))
+			poly(ci, r, [0.54, 0.25, 0.74, 0.25, 0.74, 0.42, 0.54, 0.42], Color("9fd7f2"))
+			poly(ci, r, [0.54, 0.25, 0.64, 0.25, 0.56, 0.42, 0.54, 0.42], Color("d8f0fb"))
+			box(ci, r, 0.36, 0.3, 0.4, 0.46, Color("4a4d55"))
+			circ(ci, r, 0.38, 0.24, 0.035, Color(0.5, 0.5, 0.5, 0.6))
+			circ(ci, r, 0.33, 0.17, 0.045, Color(0.6, 0.6, 0.6, 0.4))
+			poly(ci, r, [0.3, 0.6, 0.14, 0.52, 0.14, 0.58, 0.3, 0.68], Color("6a6e77"))
+			grad(ci, r, [0.06, 0.4, 0.16, 0.42, 0.18, 0.86, 0.04, 0.88], Color("b9bec7"), Color("70747d"))
+			line(ci, r, 0.04, 0.88, 0.18, 0.86, Color("3f424a"), 0.025)
+			poly(ci, r, [0.3, 0.7, 0.86, 0.7, 0.92, 0.79, 0.86, 0.88, 0.3, 0.88, 0.24, 0.79], Color("2b2d33"))
+			for k in 4:
+				circ(ci, r, 0.34 + k * 0.16, 0.79, 0.055, Color("7a7e87"))
+				circ(ci, r, 0.34 + k * 0.16, 0.79, 0.022, Color("2b2d33"))
+		"plant":
+			ellipse(ci, P(r, 0.44, 0.88), S * 0.3, S * 0.085, Color("5f3f24"))
+			ellipse(ci, P(r, 0.44, 0.86), S * 0.24, S * 0.055, Color("7d5632"))
+			line(ci, r, 0.44, 0.86, 0.44, 0.4, Color("6b4526"), 0.045)
+			line(ci, r, 0.44, 0.62, 0.3, 0.5, Color("6b4526"), 0.03)
+			line(ci, r, 0.44, 0.56, 0.58, 0.44, Color("6b4526"), 0.03)
+			for p in [[0.44, 0.32, 0.17], [0.28, 0.44, 0.12], [0.6, 0.4, 0.13], [0.36, 0.26, 0.11], [0.53, 0.25, 0.11]]:
+				circ(ci, r, p[0], p[1], p[2], Color("2f7d3c"))
+			for p in [[0.41, 0.28, 0.1], [0.26, 0.41, 0.07], [0.57, 0.36, 0.08], [0.5, 0.22, 0.06]]:
+				circ(ci, r, p[0], p[1], p[2], Color("58b55e"))
+			circ(ci, r, 0.38, 0.24, 0.035, Color("a7e39a"))
+			line(ci, r, 0.8, 0.3, 0.8, 0.74, WOOD, 0.04)
+			box(ci, r, 0.75, 0.26, 0.85, 0.31, WOOD_D)
+			poly(ci, r, [0.72, 0.72, 0.88, 0.72, 0.87, 0.9, 0.8, 0.95, 0.73, 0.9], Color("9aa0aa"))
+			poly(ci, r, [0.72, 0.72, 0.8, 0.72, 0.8, 0.95, 0.73, 0.9], Color("c3c8d0"))
+		"weed":
+			line(ci, r, 0.5, 0.92, 0.5, 0.36, Color("4d6b2f"), 0.045)
+			for a in [[0.5, 0.74, 0.3, 0.6], [0.5, 0.66, 0.7, 0.54], [0.5, 0.56, 0.34, 0.44]]:
+				line(ci, r, a[0], a[1], a[2], a[3], Color("4d6b2f"), 0.035)
+				poly(ci, r, [a[2], a[3], a[2] - 0.06, a[3] + 0.07, a[2] + 0.05, a[3] + 0.08], Color("6a8a3c"))
+			for k in 9:
+				var an := PI + k * PI / 8.0
+				line(ci, r, 0.5, 0.32, 0.5 + cos(an) * 0.2, 0.32 + sin(an) * 0.2, Color("b060cf"), 0.03)
+			circ(ci, r, 0.5, 0.34, 0.09, Color("7a2f96"))
+			circ(ci, r, 0.47, 0.31, 0.04, Color("c77fe0"))
+			ci.draw_arc(P(r, 0.5, 0.52), S * 0.42, 0, TAU, 32, Color("e8443a"), S * 0.07, true)
+			line(ci, r, 0.2, 0.22, 0.8, 0.82, Color("e8443a"), 0.07)
+		"raise", "lower", "level", "smooth":
+			var top := [0.02, 0.9, 0.24, 0.6, 0.5, 0.4, 0.76, 0.6, 0.98, 0.9]
+			if kind == "lower": top = [0.02, 0.56, 0.26, 0.6, 0.5, 0.84, 0.74, 0.6, 0.98, 0.56]
+			elif kind == "level": top = [0.02, 0.62, 0.98, 0.62]
+			elif kind == "smooth": top = [0.02, 0.8, 0.2, 0.66, 0.4, 0.6, 0.6, 0.6, 0.8, 0.66, 0.98, 0.8]
+			var body: Array = top.duplicate()
+			body.append_array([0.98, 1.0, 0.02, 1.0])
+			grad(ci, r, body, Color("8a6238"), Color("4f3620"))
+			# strata in the cut face
+			for k in 2:
+				line(ci, r, 0.06, 0.93 - k * 0.05, 0.94, 0.93 - k * 0.05, Color(0, 0, 0, 0.18), 0.012)
+			# turf along the top
+			curve(ci, r, top, Color("3f7a3a"), 0.09)
+			curve(ci, r, top, Color("6fae52"), 0.045)
+			if kind == "raise":
+				arrow(ci, r, 0.5, 0.22, true)
+			elif kind == "lower":
+				arrow(ci, r, 0.5, 0.42, false)
+			elif kind == "level":
+				line(ci, r, 0.06, 0.4, 0.94, 0.4, Color("5a3d08"), 0.07)
+				line(ci, r, 0.06, 0.4, 0.94, 0.4, Color("ffd84a"), 0.045)
+				for k in 5:
+					line(ci, r, 0.14 + k * 0.18, 0.36, 0.14 + k * 0.18, 0.44, Color("5a3d08"), 0.015)
+				ellipse(ci, P(r, 0.5, 0.4), S * 0.07, S * 0.035, Color("b8f27a"))
+			else:
+				curve(ci, r, [0.1, 0.4, 0.26, 0.28, 0.42, 0.4, 0.58, 0.28, 0.74, 0.4, 0.9, 0.28], Color("5a3d08"), 0.07)
+				curve(ci, r, [0.1, 0.4, 0.26, 0.28, 0.42, 0.4, 0.58, 0.28, 0.74, 0.4, 0.9, 0.28], Color("ffd84a"), 0.04)
+		_:
+			return false
+	return true
+
+
+## The small status and menu symbols. Returns false for anything it does not draw.
+static func glyph(ci: CanvasItem, kind: String, r: Rect2) -> bool:
+	var S := r.size.x
+	match kind:
+		"coin":
+			ellipse(ci, P(r, 0.5, 0.56), S * 0.45, S * 0.45, Color("8a5f0c"))
+			circ(ci, r, 0.5, 0.5, 0.45, Color("d99a1c"))
+			circ(ci, r, 0.5, 0.5, 0.36, Color("ffd24a"))
+			ci.draw_arc(P(r, 0.5, 0.5), S * 0.36, 0, TAU, 28, Color("b47a10"), S * 0.035, true)
+			ci.draw_arc(P(r, 0.5, 0.5), S * 0.27, PI * 1.05, PI * 1.6, 12, Color("fff3b8"), S * 0.05, true)
+			curve(ci, r, [0.6, 0.36, 0.48, 0.32, 0.4, 0.4, 0.5, 0.5, 0.6, 0.58, 0.52, 0.68, 0.4, 0.64], Color("8a5f0c"), 0.07)
+			line(ci, r, 0.5, 0.24, 0.5, 0.76, Color("8a5f0c"), 0.05)
+		"star":
+			var outer := []
+			var inner := []
+			for i in 10:
+				var a := -PI / 2.0 + i * PI / 5.0
+				var rad := 0.5 if i % 2 == 0 else 0.21
+				outer.append_array([0.5 + cos(a) * rad, 0.53 + sin(a) * rad])
+				inner.append_array([0.5 + cos(a) * rad * 0.82, 0.53 + sin(a) * rad * 0.82])
+			poly(ci, r, outer, Color("a66a08"))
+			grad(ci, r, inner, Color("ffe37a"), Color("f0a81e"))
+			poly(ci, r, [0.5, 0.13, 0.56, 0.4, 0.5, 0.53, 0.44, 0.4], Color(1, 1, 1, 0.4))
+		"leaf":
+			var shape := [0.5, 0.04, 0.78, 0.26, 0.86, 0.56, 0.7, 0.84, 0.5, 0.96, 0.3, 0.84, 0.14, 0.56, 0.22, 0.26]
+			poly(ci, r, shape, Color("1f5a30"))
+			grad(ci, r, [0.5, 0.1, 0.74, 0.28, 0.8, 0.56, 0.66, 0.8, 0.5, 0.9, 0.34, 0.8, 0.2, 0.56, 0.26, 0.28], Color("7fd46a"), Color("2f8f44"))
+			poly(ci, r, [0.5, 0.1, 0.74, 0.28, 0.8, 0.56, 0.66, 0.8, 0.5, 0.9], Color(0, 0, 0, 0.12))
+			line(ci, r, 0.5, 0.14, 0.5, 1.0, Color("1f5a30"), 0.05)
+			for k in 3:
+				var v := 0.36 + k * 0.17
+				line(ci, r, 0.5, v + 0.08, 0.3 - k * 0.0, v - 0.04, Color("1f5a30"), 0.028)
+				line(ci, r, 0.5, v + 0.08, 0.7, v - 0.04, Color("1f5a30"), 0.028)
+		"shield":
+			var sh := [0.5, 0.03, 0.9, 0.16, 0.88, 0.56, 0.5, 0.98, 0.12, 0.56, 0.1, 0.16]
+			poly(ci, r, sh, Color("7d1f1c"))
+			grad(ci, r, [0.5, 0.1, 0.83, 0.21, 0.81, 0.54, 0.5, 0.9, 0.19, 0.54, 0.17, 0.21], Color("f0625c"), Color("b8302b"))
+			poly(ci, r, [0.5, 0.1, 0.83, 0.21, 0.81, 0.54, 0.5, 0.9], Color(0, 0, 0, 0.14))
+			box(ci, r, 0.43, 0.26, 0.57, 0.72, Color.WHITE)
+			box(ci, r, 0.28, 0.41, 0.72, 0.56, Color.WHITE)
+		"flask":
+			var glass := [0.4, 0.06, 0.6, 0.06, 0.6, 0.38, 0.9, 0.86, 0.84, 0.96, 0.16, 0.96, 0.1, 0.86, 0.4, 0.38]
+			poly(ci, r, glass, Color("d9eef8"))
+			grad(ci, r, [0.3, 0.6, 0.7, 0.6, 0.86, 0.86, 0.82, 0.92, 0.18, 0.92, 0.14, 0.86], Color("a58bf0"), Color("5a3fb0"))
+			line(ci, r, 0.3, 0.6, 0.7, 0.6, Color("d6c9ff"), 0.03)
+			circ(ci, r, 0.44, 0.76, 0.045, Color("d6c9ff"))
+			circ(ci, r, 0.6, 0.82, 0.03, Color("d6c9ff"))
+			circ(ci, r, 0.54, 0.5, 0.025, Color("a58bf0"))
+			outline(ci, r, glass, Color("5b7f96"), 0.04)
+			box(ci, r, 0.36, 0.03, 0.64, 0.1, Color("5b7f96"))
+			line(ci, r, 0.44, 0.14, 0.44, 0.36, Color(1, 1, 1, 0.8), 0.03)
+		"sun":
+			for i in 12:
+				var a := i * TAU / 12.0
+				var rr := 0.5 if i % 2 == 0 else 0.42
+				line(ci, r, 0.5 + cos(a) * 0.34, 0.5 + sin(a) * 0.34, 0.5 + cos(a) * rr, 0.5 + sin(a) * rr, Color("f0a81e"), 0.06)
+			circ(ci, r, 0.5, 0.5, 0.31, Color("e89a12"))
+			circ(ci, r, 0.5, 0.5, 0.27, Color("ffd24a"))
+			circ(ci, r, 0.44, 0.44, 0.13, Color("fff0a8"))
+		"check":
+			circ(ci, r, 0.5, 0.53, 0.47, Color("1f5a30"))
+			circ(ci, r, 0.5, 0.5, 0.46, Color("2f8f44"))
+			circ(ci, r, 0.5, 0.48, 0.38, Color("4fb866"))
+			curve(ci, r, [0.27, 0.52, 0.44, 0.69, 0.75, 0.33], Color("1f5a30"), 0.16)
+			curve(ci, r, [0.27, 0.5, 0.44, 0.67, 0.75, 0.31], Color.WHITE, 0.11)
+		"todo":
+			ci.draw_arc(P(r, 0.5, 0.5), S * 0.4, 0, TAU, 24, Color("5d6f7a"), S * 0.12, true)
+			ci.draw_arc(P(r, 0.5, 0.5), S * 0.4, 0, TAU, 24, Color("cfd8dd"), S * 0.07, true)
+		"people":
+			circ(ci, r, 0.5, 0.3, 0.2, Color("b98862"))
+			circ(ci, r, 0.5, 0.28, 0.18, Color("e9b98f"))
+			grad(ci, r, [0.3, 0.52, 0.7, 0.52, 0.8, 0.98, 0.2, 0.98], Color("5aa0e6"), Color("2f6fb8"))
+		_:
+			return false
+	return true

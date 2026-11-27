@@ -374,8 +374,12 @@ func build_trail(t: Vector2i, grade: int) -> String:
 	var cost := world.cost_at(D.B.TRAIL, t) * price / 12
 	if money < cost:
 		return "Not enough money"
+	var tree := world.trees[i]
 	world.place(D.B.TRAIL, t)
 	world.trail_grade[i] = grade
+	if grade == 0 and tree > 0:
+		world.trees[i] = tree # a rough path winds between the trees; nothing is felled
+		world.changed.emit(Rect2i(t.x - 1, t.y - 1, 3, 3))
 	add_money(-cost, "Construction")
 	return ""
 

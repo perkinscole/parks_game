@@ -91,7 +91,7 @@ const CATEGORIES := [
 const TOOLS := {
 	"bulldoze": {name = "Demolish", cost = 10, desc = "Remove roads, trails and buildings. Drag an area. $10 per tile."},
 	"plant": {name = "Plant Native Trees", cost = 25, desc = "Restore habitat by planting trees on open land. Drag an area. Requires Native Restoration research."},
-	"path": {name = "Rough Path", cost = 5, desc = "A beaten track, cheap and light on the land. Fine on the flat. On a slope it is slow, slippery and where most injuries happen."},
+	"path": {name = "Rough Path", cost = 5, desc = "A faint beaten track. Nothing is cleared, so it is cheap and light on the land, but it is easy to lose: hikers go astray three times as often. On a slope it is slow and where most injuries happen."},
 	"steps": {name = "Built Trail", cost = 45, level = 2, desc = "Stone steps, drains and handrails. Safe and quick even on steep ground, and it upgrades any path it is laid over. Costly to build."},
 	"switchback": {name = "Switchback", level = 2, cost = 12, desc = "Drag from the bottom of a slope to the top: the trail finds its own zigzag route up at a gentle grade. Hikers crawl up steep trails and avoid them."},
 	"raise": {level = 2, name = "Raise Land", cost = 15, desc = "Hold to push the ground up under the brush. [ and ] change the brush size. Earthworks disturb the soil and wildlife nearby."},

@@ -161,9 +161,12 @@ func maybe_incident(gr, t: Vector2i) -> void:
 	if g.has_tech("trails"): p *= 0.6
 	p *= float(D.WEATHER[g.weather_at(t)].risk)
 	var kind := "injury"
-	if gr.walked > 22 and rng.randf() < 0.45:
+	# a faint path is easy to wander off: people lose it sooner and far more often
+	var faint: bool = w.build[i] == D.B.TRAIL and w.trail_grade[i] == 0
+	if gr.walked > (10 if faint else 22) and rng.randf() < (0.6 if faint else 0.45):
 		kind = "lost"
 		p = 0.0011 if not gr.registered else 0.0004
+		if faint: p *= 3.0
 	if w.sign_cover[i] == 1: p *= 0.3
 	if rng.randf() >= p:
 		return

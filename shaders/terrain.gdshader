@@ -92,8 +92,15 @@ void fragment() {
 	float worn = smoothstep(0.05, 0.5, pm.r + pm.b * 0.7 + edge * 0.5);
 	float trail = smoothstep(0.4, 0.62, pm.r + edge);
 	float pad = smoothstep(0.3, 0.65, pm.b + edge);
+	// laid stone (built trail): pale slabs with dark joints
+	float paved = smoothstep(0.45, 0.6, min(pm.r, pm.b) + edge * 0.3);
+	pad *= 1.0 - smoothstep(0.2, 0.5, pm.r);
 	col = mix(col, mix(col, dirt, 0.5), worn);
 	col = mix(col, dirt, max(trail, pad * 0.85));
+	vec2 slab = fract(wpos.xz * vec2(7.0, 7.0) + vec2(floor(wpos.z * 7.0) * 0.5, 0.0));
+	float joint = smoothstep(0.0, 0.1, slab.x) * smoothstep(0.0, 0.12, slab.y);
+	vec3 stone = mix(vec3(0.3, 0.29, 0.27), vec3(0.46, 0.45, 0.42), n_mid) * (0.75 + 0.5 * n_micro) * mix(0.55, 1.0, joint);
+	col = mix(col, stone, paved);
 	float shoulder = smoothstep(0.12, 0.45, pm.g + edge * 0.6);
 	float road = smoothstep(0.5, 0.6, pm.g + (n_fine - 0.5) * 0.06);
 	vec3 gravel = vec3(0.14, 0.13, 0.115) * (0.5 + 1.0 * n_micro);

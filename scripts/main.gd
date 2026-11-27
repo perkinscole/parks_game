@@ -1146,6 +1146,12 @@ func _dev_hooks(args: Dictionary) -> void:
 				for dx in range(-1, 3):
 					world.trees[World.ti(e0 + offs[k] + Vector2i(dx, dy))] = 0
 			print("showcase ", D.BUILD[kinds[k]].name, " -> '", game.try_build(kinds[k], e0 + offs[k], true), "'")
+	if args.has("grades"): # the three trail grades side by side, to compare
+		game.level = 4
+		for k in 3:
+			for y in range(4, 16):
+				game.build_trail(world.entry + Vector2i(-6 + k * 2, -y), k)
+		world.rebuild_nav()
 	if args.has("terra"): # dx,dy from the entrance: raise a mound there, then level a pad beside it
 		var tc: PackedStringArray = args.terra.split(",")
 		var tt := world.entry + Vector2i(int(tc[0]), int(tc[1]))

@@ -978,8 +978,8 @@ func _paint_tile(x: int, y: int) -> void:
 		return
 	var lines := _centerline(_arms(x, y, road))
 	var grade: int = world.trail_grade[i]
-	var half: float = 0.36 if road else [0.05, 0.11, 0.17][grade]
-	var soft: float = 0.11 if road else [0.16, 0.13, 0.07][grade]
+	var half: float = 0.36 if road else [0.035, 0.11, 0.16][grade]
+	var soft: float = 0.11 if road else [0.1, 0.13, 0.06][grade]
 	for py in PX:
 		for px in PX:
 			var p := Vector2((px + 0.5) / PX, (py + 0.5) / PX)
@@ -994,7 +994,16 @@ func _paint_tile(x: int, y: int) -> void:
 						t = clampf((p - a).dot(ab) / len2, 0.0, 1.0)
 					best = minf(best, p.distance_to(a + ab * t))
 			var v := clampf(1.0 - (best - half) / soft, 0.0, 1.0)
-			path_img.set_pixel(px0 + px, py0 + py, Color(0, v, 0) if road else Color(v * (0.7 if grade == 0 else 1.0), 0, 0))
+			if road:
+				path_img.set_pixel(px0 + px, py0 + py, Color(0, v, 0))
+			elif grade == 0:
+				# a faint, broken line of trodden ground: never bare dirt
+				path_img.set_pixel(px0 + px, py0 + py, Color(v * (0.34 + 0.3 * D.hash2(px0 + px, py0 + py, 5)), 0, 0))
+			elif grade == 2:
+				# red and blue together mark laid stone for the shader
+				path_img.set_pixel(px0 + px, py0 + py, Color(v, 0, v))
+			else:
+				path_img.set_pixel(px0 + px, py0 + py, Color(v, 0, 0))
 
 
 ## Mesh parts of paths: bridges and boardwalks over water, and painted lines.
@@ -1086,7 +1095,8 @@ func _rebuild_region(key: Vector2i) -> void:
 	for y in range(key.y * REG, mini(World.H, key.y * REG + REG)):
 		for x in range(key.x * REG, mini(World.W, key.x * REG + REG)):
 			var i := World.idx(x, y)
-			if world.build[i] != D.B.NONE or world.landmark_at.has(i):
+			var faint: bool = world.build[i] == D.B.TRAIL and world.trail_grade[i] == 0
+			if (world.build[i] != D.B.NONE and not faint) or world.landmark_at.has(i):
 				continue
 			var t := world.terrain[i]
 			var bio := world.biome[i]
