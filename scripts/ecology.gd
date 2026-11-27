@@ -106,6 +106,11 @@ func understanding() -> float:
 
 # -------------------------------------------------------------- populations
 
+## Fish taken by anglers.
+func harvest(id: String, n: float) -> void:
+	pops[_ix[id]] = maxf(0.0, pops[_ix[id]] - n)
+
+
 func _compute_caps() -> void:
 	var n := World.W * World.H
 	var water_n := 0
@@ -114,7 +119,9 @@ func _compute_caps() -> void:
 		if w.is_water(w.terrain[i]):
 			water_n += 1
 			bad += minf(1.0, w.litter[i] * 0.6 + w.invasive[i] + maxf(0.0, w.disturb[i] - 0.2) * 1.6)
-	water_quality = clampf(1.0 - bad / maxf(1.0, water_n * 0.25) - runoff, 0.0, 1.0)
+	# fuel, oil and wake from motorboats
+	var boats := w.count_kind(D.B.MARINA) * 0.14
+	water_quality = clampf(1.0 - bad / maxf(1.0, water_n * 0.25) - runoff - boats, 0.0, 1.0)
 
 	var by_terrain := {}
 	for si in D.SPECIES.size():

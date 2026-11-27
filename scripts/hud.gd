@@ -372,8 +372,8 @@ func _build_top() -> void:
 	sys.offset_right = -8
 	sys.add_theme_constant_override("separation", 6)
 	root.add_child(sys)
-	sys.add_child(_dropdown(["View: Normal", "View: Habitat", "View: Scenery", "View: Disturbance"], "Info views",
-		func(i): overlay_selected.emit(["", "habitat", "scenery", "disturb"][i])))
+	sys.add_child(_dropdown(["View: Normal", "View: Habitat", "View: Scenery", "View: Disturbance", "View: Accessibility"], "Info views",
+		func(i): overlay_selected.emit(["", "habitat", "scenery", "disturb", "access"][i])))
 	quality_box = _dropdown(["Graphics: Fast", "Graphics: Balanced", "Graphics: Best"], "Graphics quality. Choose Fast if the game feels laggy.",
 		func(i): menu_action.emit("quality%d" % i))
 	sys.add_child(quality_box)
@@ -781,6 +781,21 @@ func _panel_park() -> void:
 			var need: float = row[2]
 			_kbar(row[0], clampf(have / maxf(need, 0.001), 0.0, 1.0), ("%.1f / %.1f" % [have, need]) if need < 10.0 else "%d / %d" % [int(have), int(need)])
 	_kv("Status", "Open" if g.open else "Closed", GREEN if g.open else Color("ff6b5e"))
+	var share: Array = g.world.access_share()
+	if share[1] > 0:
+		_kbar("Accessible", float(share[0]) / share[1], "%d / %d" % [share[0], share[1]])
+		side_body.add_child(_para("Attractions a wheelchair or stroller can reach from the parking: pavement, docks, and Trail or Built Trail that is not steep. Rough paths and steep climbs shut people out. Each one opened up brings more visitors. See View: Accessibility.", 12))
+	_head("Park rules")
+	var fh := HBoxContainer.new()
+	var fl := _label("Fishing: %s" % ("allowed" if g.fishing else "banned"), 14, GREEN if g.fishing else INK)
+	fl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	fh.add_child(fl)
+	var fcb := func():
+		g.set_fishing(not g.fishing)
+		_fill_panel()
+	fh.add_child(_button("Ban" if g.fishing else "Allow", fcb))
+	side_body.add_child(fh)
+	side_body.add_child(_para("Allowed: anglers buy permits ($9 each a day) and more people come, most of all where there are docks. But every fish they take is one fewer trout for the herons and eagles, and the trout can collapse if too many are taken.", 12))
 	_kbar("Visitor rating", g.stars / 5.0, "%.1f" % g.stars)
 	if g.eco.understanding() >= 0.08:
 		_kbar("Ecosystem (est.)", g.eco.health / 100.0, _eco_text())
@@ -1239,6 +1254,11 @@ func _issues() -> Array:
 		out.append([1, "%s has no path to it" % orphan.name, "Visitors cannot reach it, so it earns nothing. Connect it to a parking lot with a Trail.", orphan.tile])
 	if g.open and attractions == 0:
 		out.append([1, "Nothing for visitors to do", "People need a reason to come. Build a Scenic Overlook, Picnic Area or Visitor Center on a trail.", null])
+	var acc: Array = w.access_share()
+	if acc[1] >= 2 and float(acc[0]) / acc[1] < 0.5:
+		out.append([1, "Only %d of %d attractions are accessible" % [acc[0], acc[1]], "Wheelchair users and families with strollers cannot reach the rest. Link them to the parking with Trail, Built Trail or Dock on gentle ground; rough paths and steep steps shut people out. View: Accessibility shows where the route breaks.", null])
+	if g.fishing and g.eco.understanding() >= 0.08 and g.eco.r("trout") < 0.5:
+		out.append([1, "Trout are being fished out", "Anglers are taking more than the streams can replace, and the herons and eagles that eat trout will follow them down. Ban fishing in the Park panel for a season or two.", null])
 	if g.safety < 70.0:
 		out.append([2 if g.safety < 45.0 else 1, "Safety is at %d%%" % int(g.safety), "Hikers are getting hurt or lost. Hire rangers, put Safety Signage and Trailhead Kiosks on long or steep trails, and avoid steep straight climbs.", null])
 	# steep trail nobody has been warned about, and trail a long way from any help

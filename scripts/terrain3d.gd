@@ -18,7 +18,7 @@ const GH := World.H * SUB + 1
 const LIT := [D.B.VISITOR_CENTER, D.B.RANGER, D.B.RESEARCH, D.B.SNACK, D.B.CAMP, D.B.GATE, D.B.RESTROOM]
 const NO_FOUNDATION := [D.B.CALLBOX, D.B.HELIPAD, D.B.BIN, D.B.SIGN, D.B.PICNIC, D.B.TRAILHEAD, D.B.CRAG, D.B.GATE, D.B.CAMP]
 # footprint width (in tiles) that supplied building models are scaled to
-const EXT_WIDTH := {D.B.CALLBOX: 0.26, D.B.HUT: 0.82, D.B.SAR: 1.85, D.B.HELIPAD: 1.85, D.B.PICNIC: 0.42, D.B.TRAILHEAD: 0.36, D.B.HIDE: 0.62, D.B.RESTROOM: 0.8, D.B.SNACK: 0.72, D.B.GATE: 1.35,
+const EXT_WIDTH := {D.B.KAYAK: 0.8, D.B.MARINA: 0.9, D.B.CALLBOX: 0.26, D.B.HUT: 0.82, D.B.SAR: 1.85, D.B.HELIPAD: 1.85, D.B.PICNIC: 0.42, D.B.TRAILHEAD: 0.36, D.B.HIDE: 0.62, D.B.RESTROOM: 0.8, D.B.SNACK: 0.72, D.B.GATE: 1.35,
 	D.B.OVERLOOK: 0.92, D.B.VISITOR_CENTER: 1.85, D.B.RANGER: 1.5, D.B.RESEARCH: 1.6, D.B.CAMP: 1.85, D.B.BIN: 0.3, D.B.SIGN: 0.2, D.B.CRAG: 0.9}
 const VEG := ["trunk", "leaf", "conifer", "conifer2", "rock", "rock2", "rock_red", "flower", "bush", "reed", "grass"]
 const HD := {"conifer": "conifer_hd", "conifer2": "conifer2_hd", "leaf": "leaf_hd"}
@@ -978,7 +978,7 @@ func _paint_tile(x: int, y: int) -> void:
 		return
 	var lines := _centerline(_arms(x, y, road))
 	var grade: int = world.trail_grade[i]
-	var half: float = 0.36 if road else [0.035, 0.11, 0.16][grade]
+	var half: float = 0.36 if road else [0.045, 0.11, 0.16][grade]
 	var soft: float = 0.11 if road else [0.1, 0.13, 0.06][grade]
 	for py in PX:
 		for px in PX:
@@ -998,7 +998,7 @@ func _paint_tile(x: int, y: int) -> void:
 				path_img.set_pixel(px0 + px, py0 + py, Color(0, v, 0))
 			elif grade == 0:
 				# a faint, broken line of trodden ground: never bare dirt
-				path_img.set_pixel(px0 + px, py0 + py, Color(v * (0.34 + 0.3 * D.hash2(px0 + px, py0 + py, 5)), 0, 0))
+				path_img.set_pixel(px0 + px, py0 + py, Color(v * (0.5 + 0.4 * D.hash2(px0 + px, py0 + py, 5)), 0, 0))
 			elif grade == 2:
 				# red and blue together mark laid stone for the shader
 				path_img.set_pixel(px0 + px, py0 + py, Color(v, 0, v))

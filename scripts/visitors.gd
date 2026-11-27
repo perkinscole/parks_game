@@ -418,6 +418,15 @@ func _apply_visit(gr: Group, s: Dictionary) -> void:
 			gr.sat += 4.0 + 18.0 * q * minf(pref, 1.3)
 			if q > 0.7: _think(gr, "We watched so much wildlife from the hide")
 			elif q < 0.3: _think(gr, "We sat in the hide and saw nothing")
+		D.B.KAYAK:
+			gr.sat += 8.0 + 12.0 * q * minf(pref, 1.2)
+			g.add_money(gr.n * rng.randf_range(9.0, 14.0), "Boat rentals")
+			if q > 0.7: _think(gr, "Paddling out on the water was the best part")
+		D.B.MARINA:
+			gr.sat += 13.0 * pref
+			g.add_money(gr.n * rng.randf_range(26.0, 38.0), "Boat rentals")
+			litter_p = 0.2
+			if pref > 0.5: _think(gr, "We had a blast on the motorboat")
 		D.B.RESTROOM:
 			gr.rest_ok = true
 	if litter_p > 0.0:
@@ -446,6 +455,10 @@ func _finalize(gr: Group) -> void:
 		gr.sat += (avg - 0.4) * 30.0 * (0.3 + hike * 0.8)
 		if avg > 0.75 and hike >= 0.5: _think(gr, "The trails here are gorgeous")
 		elif avg < 0.12: _think(gr, "The walk was dull, all roads and parking lots")
+	# the roar of engines carries a long way over water
+	if w.count_kind(D.B.MARINA) > 0 and hike >= 0.5 and gr.walked > 12:
+		gr.sat -= 5.0
+		if rng.randf() < 0.3: _think(gr, "You could hear motorboats from every trail")
 	if gr.litter_seen > 0:
 		gr.sat -= minf(16.0, gr.litter_seen * 2.0)
 		if gr.litter_seen >= 3: _think(gr, "There was litter everywhere")

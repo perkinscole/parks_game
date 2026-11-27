@@ -22,6 +22,8 @@ var invasive := PackedFloat32Array()
 var disturb := PackedFloat32Array()
 var trail_grade := PackedByteArray() # 0 rough path, 1 graded trail, 2 built trail
 var call_cover := PackedByteArray()
+var accessible := PackedByteArray() # walkable tiles a wheelchair or stroller can reach from the parking
+var water_trail_ok := false # set only while a dock is being laid
 var hut_cover := PackedByteArray()
 var quality := PackedFloat32Array()
 var park_used := PackedByteArray()
@@ -109,6 +111,7 @@ func generate(seed_val: int) -> void:
 	disturb.resize(n); disturb.fill(0.0)
 	trail_grade.resize(n); trail_grade.fill(1)
 	call_cover.resize(n)
+	accessible.resize(n)
 	hut_cover.resize(n)
 	quality.resize(n); quality.fill(0.0)
 	rare.resize(n); rare.fill(0.0)
@@ -701,6 +704,11 @@ func can_build(kind: int, t: Vector2i) -> String:
 			D.B.TRAIL:
 				if b != D.B.NONE: return "Occupied"
 				if ter == D.T.DEEP: return "Water is too deep"
+				if is_water(ter) and not water_trail_ok: return "Paths can't cross water: build a Dock"
+			D.B.KAYAK, D.B.MARINA:
+				if b != D.B.NONE: return "Occupied"
+				if is_water(ter): return "Stands on the shore, not in the water"
+				if not _near_terrain(c.x, c.y, 1, [D.T.WATER, D.T.DEEP]): return "Must be at the water's edge"
 			D.B.GATE:
 				if b != D.B.ROAD: return "Place on a road"
 				if c == entry: return "Too close to the highway"
@@ -920,6 +928,54 @@ func rebuild_nav() -> void:
 			D.B.HUT: _stamp(hut_cover, st, 10)
 			D.B.CAMP, D.B.RANGER, D.B.SAR: _stamp(hut_cover, st, 6)
 			D.B.RESTROOM, D.B.VISITOR_CENTER: _stamp(rest_cover, st, 9)
+	_flood_accessible()
+
+
+## Flood out from the parking over ground a wheelchair or stroller can manage:
+## pavement, docks, and graded or built trail that is not steep.
+func _flood_accessible() -> void:
+	accessible.fill(0)
+	var frontier: Array[Vector2i] = []
+	for t in lot_tiles:
+		accessible[ti(t)] = 1
+		frontier.append(t)
+	while not frontier.is_empty():
+		var c: Vector2i = frontier.pop_back()
+		for d in DIRS:
+			var q: Vector2i = c + d
+			if not inb(q.x, q.y) or accessible[ti(q)] == 1:
+				continue
+			var j := ti(q)
+			var b := build[j]
+			var ok := b == D.B.ROAD or b == D.B.GATE or b == D.B.PARKING
+			if b == D.B.TRAIL and trail_grade[j] >= 1 and absf(height[j] - height[ti(c)]) <= 0.35:
+				ok = true
+			if ok:
+				accessible[j] = 1
+				frontier.append(q)
+
+
+## [attractions a wheelchair can reach, attractions in all]
+func access_share() -> Array:
+	var ok := 0
+	var total := 0
+	for s in structures.values():
+		if not (s.kind in D.ATTRACTIONS):
+			continue
+		total += 1
+		for a: Vector2i in s.access:
+			if accessible[ti(a)] == 1:
+				ok += 1
+				break
+	return [ok, total]
+
+
+func dock_count() -> int:
+	var n := 0
+	for t in trail_tiles:
+		if is_water(terrain[ti(t)]):
+			n += 1
+	return n
 
 
 func _stamp(arr: PackedByteArray, t: Vector2i, r: int) -> void:

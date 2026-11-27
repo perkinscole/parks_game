@@ -14,7 +14,7 @@ enum T { DEEP, WATER, SAND, GRASS, MEADOW, FOREST, ROCK, PEAK }
 enum B {
 	NONE, ROAD, TRAIL, PARKING, GATE, VISITOR_CENTER, RESTROOM, BIN, OVERLOOK,
 	PICNIC, CAMP, SNACK, RANGER, RESEARCH, CRAG, SIGN, HIDE, TRAILHEAD,
-	CALLBOX, HUT, SAR, HELIPAD
+	CALLBOX, HUT, SAR, HELIPAD, KAYAK, MARINA
 }
 
 # The park grows through four levels. Each one opens more to build, and each
@@ -75,6 +75,10 @@ const BUILD := {
 		desc = "A trained team with a truck and litters. Sent to serious emergencies up to 60 tiles away, much faster than a ranger on foot. One call-out at a time."},
 	B.HELIPAD: {name = "Rescue Helipad", cost = 15000, upkeep = 140, size = Vector2i(2, 2), dist = 6, str = 0.8, level = 4,
 		desc = "A helicopter reaches anywhere in the park in moments and saves lives nothing else can. Each flight costs $600, and the noise empties the sky of eagles."},
+	B.KAYAK: {name = "Kayak Rental", cost = 1800, upkeep = 15, size = Vector2i(1, 1), dist = 2, str = 0.2, cap = 10, level = 2,
+		desc = "Paddles and life vests at the water's edge. Quiet: herons and beavers barely notice. Modest income, and visitors love it where the scenery is good."},
+	B.MARINA: {name = "Motorboat Rental", cost = 5000, upkeep = 50, size = Vector2i(1, 1), dist = 8, str = 0.9, cap = 14, level = 3,
+		desc = "Powerboats by the hour. Nearly three times the income of kayaks, but engine noise clears wildlife from 8 tiles around and fuel and wake foul the water for trout, herons and beavers."},
 	B.TRAILHEAD: {level = 2, name = "Trailhead Kiosk", cost = 400, upkeep = 3, size = Vector2i(1, 1), dist = 1, str = 0.15,
 		desc = "Trail maps and a register. Hikers leaving from here rarely get lost, and it doubles as safety signage."},
 }
@@ -85,13 +89,15 @@ const CATEGORIES := [
 	{id = "attractions", name = "Attractions", tools = [B.OVERLOOK, B.PICNIC, B.CAMP, B.CRAG, B.HIDE]},
 	{id = "ops", name = "Operations", tools = [B.RANGER, B.RESEARCH, B.CALLBOX, B.HUT, B.SAR, B.HELIPAD]},
 	{id = "land", name = "Land", tools = ["bulldoze", "plant", "weed"]},
+	{id = "water", name = "Water", tools = ["dock", B.KAYAK, B.MARINA]},
 	{id = "terrain", name = "Terrain", tools = ["raise", "lower", "level", "smooth"]},
 ]
 
 const TOOLS := {
 	"bulldoze": {name = "Demolish", cost = 10, desc = "Remove roads, trails and buildings. Drag an area. $10 per tile."},
 	"plant": {name = "Plant Native Trees", cost = 25, desc = "Restore habitat by planting trees on open land. Drag an area. Requires Native Restoration research."},
-	"path": {name = "Rough Path", cost = 5, desc = "A faint beaten track. Nothing is cleared, so it is cheap and light on the land, but it is easy to lose: hikers go astray three times as often. On a slope it is slow and where most injuries happen."},
+	"dock": {name = "Dock / Boardwalk", cost = 60, desc = "A timber walkway over shallow water. Paths cannot cross water without one. Use it for footbridges, fishing piers and lakeshore boardwalks; it is level and smooth, so anyone can use it."},
+	"path": {name = "Rough Path", cost = 5, desc = "A faint beaten track, barely cleared, so it is cheap and light on the land, but it is easy to lose: hikers go astray three times as often. On a slope it is slow and where most injuries happen."},
 	"steps": {name = "Built Trail", cost = 45, level = 2, desc = "Stone steps, drains and handrails. Safe and quick even on steep ground, and it upgrades any path it is laid over. Costly to build."},
 	"switchback": {name = "Switchback", level = 2, cost = 12, desc = "Drag from the bottom of a slope to the top: the trail finds its own zigzag route up at a gentle grade. Hikers crawl up steep trails and avoid them."},
 	"raise": {level = 2, name = "Raise Land", cost = 15, desc = "Hold to push the ground up under the brush. [ and ] change the brush size. Earthworks disturb the soil and wildlife nearby."},
@@ -110,23 +116,24 @@ const EFFECTS := {
 	B.RESEARCH: [0, 1, 0, 0, 2], B.CRAG: [1, -1, -2, 0, 0], B.SIGN: [0, 0, 1, 0, 0], B.HIDE: [1, 0, 0, 0, 0],
 	B.TRAILHEAD: [1, 0, 1, 0, 0],
 	B.CALLBOX: [0, 0, 1, 0, 0], B.HUT: [1, -1, 2, 0, 0], B.SAR: [0, -1, 2, 0, 0], B.HELIPAD: [0, -2, 2, 0, 0],
+	B.KAYAK: [1, 0, 0, 1, 0], B.MARINA: [1, -2, 0, 2, 0], "dock": [1, -1, 1, 0, 0],
 	"path": [1, 0, -1, 0, 0], "steps": [1, -1, 2, 0, 0],
 	"switchback": [1, -1, 1, 0, 0], "bulldoze": [0, 1, 0, 0, 0], "plant": [0, 2, 0, 0, 0], "weed": [0, 2, 0, 0, 0],
 	"raise": [0, -1, 0, 0, 0], "lower": [0, -1, 0, 0, 0], "level": [0, -1, 0, 0, 0], "smooth": [0, -1, 0, 0, 0],
 }
 
-const ATTRACTIONS := [B.OVERLOOK, B.VISITOR_CENTER, B.PICNIC, B.CAMP, B.SNACK, B.CRAG, B.HIDE]
+const ATTRACTIONS := [B.OVERLOOK, B.VISITOR_CENTER, B.PICNIC, B.CAMP, B.SNACK, B.CRAG, B.HIDE, B.KAYAK, B.MARINA]
 
 # range: max one-way walk in tiles. hike: how much they value long, scenic walks.
 const VTYPES := [
 	{id = "sightseer", name = "Sightseers", weight = 30.0, vrange = 14, hike = 0.15, stops = 3,
-		prefs = {B.OVERLOOK: 1.0, B.VISITOR_CENTER: 0.9, B.PICNIC: 0.5, B.SNACK: 0.6, B.HIDE: 0.3}},
+		prefs = {B.OVERLOOK: 1.0, B.VISITOR_CENTER: 0.9, B.PICNIC: 0.5, B.SNACK: 0.6, B.HIDE: 0.3, B.KAYAK: 0.6, B.MARINA: 1.0}},
 	{id = "family", name = "Family", weight = 25.0, vrange = 11, hike = 0.1, stops = 3,
-		prefs = {B.OVERLOOK: 0.7, B.VISITOR_CENTER: 1.0, B.PICNIC: 1.0, B.SNACK: 0.8, B.HIDE: 0.5}},
+		prefs = {B.OVERLOOK: 0.7, B.VISITOR_CENTER: 1.0, B.PICNIC: 1.0, B.SNACK: 0.8, B.HIDE: 0.5, B.KAYAK: 0.9, B.MARINA: 1.0}},
 	{id = "hiker", name = "Hikers", weight = 22.0, vrange = 60, hike = 1.0, stops = 2,
 		prefs = {B.OVERLOOK: 1.0, B.PICNIC: 0.3, B.HIDE: 0.5, B.VISITOR_CENTER: 0.2}},
 	{id = "naturalist", name = "Naturalists", weight = 10.0, vrange = 34, hike = 0.6, stops = 2,
-		prefs = {B.HIDE: 1.4, B.OVERLOOK: 0.8, B.VISITOR_CENTER: 0.5}},
+		prefs = {B.HIDE: 1.4, B.OVERLOOK: 0.8, B.VISITOR_CENTER: 0.5, B.KAYAK: 1.1, B.MARINA: 0.0}},
 	{id = "climber", name = "Climbers", weight = 8.0, vrange = 45, hike = 0.3, stops = 1, needs = B.CRAG,
 		prefs = {B.CRAG: 1.6, B.SNACK: 0.3}},
 	{id = "camper", name = "Campers", weight = 9.0, vrange = 30, hike = 0.5, stops = 2, needs = B.CAMP,

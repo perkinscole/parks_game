@@ -852,7 +852,7 @@ func _brush_tiles(c: Vector2i) -> Array[Vector2i]:
 func _drag_tiles(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 	if tool is String and tool == "switchback":
 		return _switchback(a, b)
-	if tool is String and (tool == "path" or tool == "steps"):
+	if tool is String and (tool == "path" or tool == "steps" or tool == "dock"):
 		return _line(a, b)
 	if tool is int and tool in LINEAR:
 		return _line(a, b)
@@ -869,6 +869,7 @@ func _tile_ok(t: Vector2i) -> bool:
 		return world.can_terraform(t)
 	match tool:
 		"switchback": return world.can_build(D.B.TRAIL, t) == ""
+		"dock": return world.build[i] == D.B.NONE and world.terrain[i] == D.T.WATER
 		"path": return world.can_build(D.B.TRAIL, t) == ""
 		"steps": return world.can_build(D.B.TRAIL, t) == "" or (world.build[i] == D.B.TRAIL and world.trail_grade[i] < 2)
 		"bulldoze": return world.build[i] != D.B.NONE and t != world.entry
@@ -981,6 +982,12 @@ func _apply_drag() -> void:
 		else:
 			var done := false
 			match tool:
+				"dock":
+					var why4 := game.build_dock(t)
+					if why4 == "Not enough money":
+						game.say("Not enough money to finish the dock.", "warn")
+						break
+					done = why4 == ""
 				"path", "steps":
 					var why3 := game.build_trail(t, 0 if tool == "path" else 2)
 					if why3 == "Not enough money":
@@ -1022,6 +1029,10 @@ func _rebuild_overlay() -> void:
 						col.a = 0.6
 					"disturb":
 						col = Color(0.85, 0.2, 0.15, clampf(world.disturb[i], 0.0, 1.0) * 0.75)
+					"access":
+						var bk := world.build[i]
+						if bk == D.B.TRAIL or bk == D.B.ROAD or bk == D.B.PARKING or bk == D.B.GATE:
+							col = Color(0.25, 0.9, 0.45, 0.8) if world.accessible[i] == 1 else Color(0.95, 0.3, 0.2, 0.8)
 				if col.a > 0.02:
 					_tile_quad(m, Vector2i(x, y), col, 0.1)
 	overlay_mesh.mesh = m.commit()
@@ -1152,6 +1163,33 @@ func _dev_hooks(args: Dictionary) -> void:
 			for y in range(4, 16):
 				game.build_trail(world.entry + Vector2i(-6 + k * 2, -y), k)
 		world.rebuild_nav()
+	if args.has("water"): # a dock, a kayak rental and a motorboat rental on the nearest shore, with fishing on
+		game.level = 4
+		game.money = 100000.0
+		var shore := Vector2i(-1, -1)
+		var bd := 1e9
+		for y in range(3, World.H - 3):
+			for x in range(3, World.W - 3):
+				var st := Vector2i(x, y)
+				if world.can_build(D.B.KAYAK, st) == "" and world.can_build(D.B.KAYAK, st + Vector2i(2, 0)) == "" and Vector2(st - world.entry).length() < bd:
+					bd = Vector2(st - world.entry).length()
+					shore = st
+		print("water: shore ", shore, " kayak '", game.try_build(D.B.KAYAK, shore, true), "' marina '", game.try_build(D.B.MARINA, shore + Vector2i(2, 0), true), "'")
+		var docks := 0
+		for r2 in range(1, 6):
+			for d in [Vector2i(0, 1), Vector2i(0, -1), Vector2i(1, 0), Vector2i(-1, 0)]:
+				if game.build_dock(shore + Vector2i(1, 0) + d * r2) == "":
+					docks += 1
+		var wet := Vector2i(-1, -1)
+		for i in World.W * World.H:
+			if world.terrain[i] == D.T.WATER and world.build[i] == D.B.NONE and not world.landmark_at.has(i):
+				wet = Vector2i(i % World.W, i / World.W)
+				break
+		print("water: docks ", docks, "  path on water: '", world.can_build(D.B.TRAIL, wet), "'  rough path: '", game.build_trail(wet, 0), "'  dock: '", game.build_dock(wet), "'")
+		game.set_fishing(true)
+		world.rebuild_nav()
+		target = Vector3(shore.x + 1.0, 0, shore.y)
+		dist = 12.0
 	if args.has("terra"): # dx,dy from the entrance: raise a mound there, then level a pad beside it
 		var tc: PackedStringArray = args.terra.split(",")
 		var tt := world.entry + Vector2i(int(tc[0]), int(tc[1]))

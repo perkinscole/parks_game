@@ -36,6 +36,7 @@ var turned_away_today := 0
 var serious_incidents := 0
 var deaths := 0
 var level := 1
+var fishing := false # park rule: is angling allowed?
 signal leveled(lv: int)
 var last_serious_day := -99
 var comments := {}
@@ -139,6 +140,12 @@ func _new_day() -> void:
 		upkeep += D.BUILD[s.kind].upkeep
 	add_money(-upkeep, "Upkeep")
 	add_money(350.0 + stars * 40.0, "Federal funding")
+	if fishing and open:
+		# anglers need somewhere to stand: docks draw far more of them than bare shore
+		var anglers := minf(visitors_today * 0.2, 4.0 + world.dock_count() * 2.5)
+		if anglers >= 1.0:
+			add_money(anglers * 9.0, "Fishing permits")
+			eco.harvest("trout", anglers * 0.6)
 	ledger_prev = ledger
 	ledger = {}
 	visitors_yesterday = visitors_today
@@ -295,6 +302,8 @@ func update_appeal() -> void:
 			D.B.HIDE: s.quality = eco.wildlife_score(st)
 			D.B.CRAG: s.quality = 0.7
 			D.B.VISITOR_CENTER: s.quality = 0.8 if has_tech("interp") else 0.6
+			D.B.KAYAK: s.quality = 0.35 + world.scenic(st) * 0.6
+			D.B.MARINA: s.quality = 0.6
 			_: s.quality = 0.5
 		if s.kind in D.ATTRACTIONS and not s.access.is_empty():
 			var base := 0.5 + float(s.quality)
@@ -304,13 +313,18 @@ func update_appeal() -> void:
 			a += base * pow(0.8, k)
 			per_kind[s.kind] = k + 1
 	a += minf(4.0, world.trail_tiles.size() / 40.0)
+	if fishing:
+		a += 0.4 + minf(1.2, world.dock_count() * 0.1)
 	appeal = a
 	fair_fee = 6.0 + a * 1.6
 	open = world.count_kind(D.B.GATE) > 0 and _lot_reachable()
 	var fee_factor := clampf(exp(-(fee - fair_fee) / fair_fee * 1.3), 0.08, 1.35)
 	var rating_factor := 0.35 + stars / 5.0 * 1.0
 	var safety_factor := 0.6 + 0.4 * safety / 100.0
-	demand = (5.0 + a * 11.0) * fee_factor * rating_factor * safety_factor * D.SEASON_DEMAND[season()] * float(D.WEATHER[weather].demand)
+	# a park more people can get around draws more people
+	var share: Array = world.access_share()
+	var access_factor := 1.0 + 0.2 * (float(share[0]) / float(share[1]) if share[1] > 0 else 0.0)
+	demand = (5.0 + a * 11.0) * access_factor * fee_factor * rating_factor * safety_factor * D.SEASON_DEMAND[season()] * float(D.WEATHER[weather].demand)
 	if not open:
 		demand = 0.0
 
@@ -355,6 +369,31 @@ func _check_level() -> void:
 	leveled.emit(level)
 
 
+## A timber walkway over shallow water.
+func build_dock(t: Vector2i) -> String:
+	if unlock_level("dock") > level:
+		return "Locked"
+	if not world.is_water(world.terrain[World.ti(t)]):
+		return "Docks go over water"
+	world.water_trail_ok = true
+	var why := world.can_build(D.B.TRAIL, t)
+	world.water_trail_ok = false
+	if why != "":
+		return why
+	if money < 60.0:
+		return "Not enough money"
+	world.place(D.B.TRAIL, t)
+	world.trail_grade[World.ti(t)] = 2
+	add_money(-60.0, "Construction")
+	return ""
+
+
+func set_fishing(on: bool) -> void:
+	fishing = on
+	say("Fishing is now %s." % ("allowed: anglers will buy permits, and trout numbers will fall where they fish" if on else "banned: the trout are left to the herons and eagles"), "info")
+	update_appeal()
+
+
 ## Lays or upgrades a trail of the given grade (0 rough, 1 graded, 2 built).
 func build_trail(t: Vector2i, grade: int) -> String:
 	var i := World.ti(t)
@@ -374,12 +413,8 @@ func build_trail(t: Vector2i, grade: int) -> String:
 	var cost := world.cost_at(D.B.TRAIL, t) * price / 12
 	if money < cost:
 		return "Not enough money"
-	var tree := world.trees[i]
 	world.place(D.B.TRAIL, t)
 	world.trail_grade[i] = grade
-	if grade == 0 and tree > 0:
-		world.trees[i] = tree # a rough path winds between the trees; nothing is felled
-		world.changed.emit(Rect2i(t.x - 1, t.y - 1, 3, 3))
 	add_money(-cost, "Construction")
 	return ""
 
@@ -484,7 +519,7 @@ func save_game() -> bool:
 	for s in staffing.staff:
 		roles.append(s.role)
 	var d := {
-		version = 3, level = level, deaths = deaths, trail_grade = world.trail_grade, seed = map_seed, day = day, minutes = minutes, money = money, fee = fee, research = research,
+		version = 3, fishing = fishing, level = level, deaths = deaths, trail_grade = world.trail_grade, seed = map_seed, day = day, minutes = minutes, money = money, fee = fee, research = research,
 		research_total = research_total, techs = techs, safety = safety, ratings = ratings, total_visitors = total_visitors,
 		serious = serious_incidents, last_serious = last_serious_day, climate = climate, zone_weather = zone_weather,
 		zone_next = zone_next, zone_dry = zone_dry, discoveries = discoveries, comments = comments,
@@ -516,6 +551,7 @@ func load_game(d: Dictionary) -> void:
 	total_visitors = d.total_visitors
 	serious_incidents = d.serious
 	level = d.get("level", 1)
+	fishing = d.get("fishing", false)
 	deaths = d.get("deaths", 0)
 	if d.has("trail_grade"):
 		world.trail_grade = d.trail_grade

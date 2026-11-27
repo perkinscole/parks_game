@@ -360,6 +360,19 @@ static func icon(ci: CanvasItem, kind, r: Rect2) -> bool:
 				return true
 		return false
 	match kind:
+		"dock":
+			grad(ci, r, [0.0, 0.5, 1.0, 0.5, 1.0, 1.0, 0.0, 1.0], Color("4fa3d6"), Color("2a6fa3"))
+			for k in 3:
+				curve(ci, r, [0.06 + k * 0.3, 0.9 - k * 0.1, 0.14 + k * 0.3, 0.87 - k * 0.1, 0.22 + k * 0.3, 0.9 - k * 0.1], Color(1, 1, 1, 0.5), 0.02)
+			for k in 2:
+				box(ci, r, 0.3 + k * 0.34, 0.6, 0.35 + k * 0.34, 0.98, Color("5a3d24"))
+			grad(ci, r, [0.36, 0.44, 0.64, 0.44, 0.86, 0.8, 0.14, 0.8], Color("c79a62"), Color("a1743f"))
+			for k in 5:
+				var v := 0.5 + k * 0.065
+				line(ci, r, lerpf(0.36, 0.14, (v - 0.44) / 0.36), v, lerpf(0.64, 0.86, (v - 0.44) / 0.36), v, Color("6b4526"), 0.012)
+			poly(ci, r, [0.14, 0.8, 0.86, 0.8, 0.86, 0.85, 0.14, 0.85], Color("6b4526"))
+			box(ci, r, 0.13, 0.56, 0.17, 0.82, Color("7d5230"))
+			box(ci, r, 0.83, 0.56, 0.87, 0.82, Color("7d5230"))
 		"path":
 			# a faint track that the grass is already taking back
 			for seg in [[0.36, 0.98, 0.44, 0.84], [0.47, 0.78, 0.4, 0.66], [0.38, 0.6, 0.5, 0.5], [0.54, 0.46, 0.6, 0.36]]:
