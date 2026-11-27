@@ -64,6 +64,7 @@ func setup(g: Game, terrain: Terrain3D) -> void:
 		var sc := 0.235 / maxf(box.size.y, 0.0001)
 		var c := box.get_center()
 		_walk[name] = {frames = frames.size(), fit = Transform3D(Basis().scaled(Vector3(sc, sc, sc)), Vector3(-c.x * sc, -box.position.y * sc, -c.z * sc))}
+		Icons.people[name] = frames[0]
 		for f in frames.size():
 			meshes["px_%s_%d" % [name, f]] = frames[f]
 		if name.begins_with("person"):

@@ -292,7 +292,7 @@ func start_game(seed_val: int, save: Dictionary) -> void:
 		# lives beside the game so the pictures survive a return to the menu
 		var icons := Icons.new()
 		get_tree().root.add_child.call_deferred(icons)
-		icons.build.call_deferred(land.mat.duplicate())
+		icons.build(land.mat.duplicate())
 	hud = HUD.new()
 	add_child(hud)
 	hud.setup(game, font)
@@ -1135,6 +1135,17 @@ func _dev_hooks(args: Dictionary) -> void:
 		for k in steps:
 			game.step(0.066)
 		_report()
+	if args.has("showcase"): # set the newest buildings down by the entrance to look at them
+		game.level = 4
+		game.money = 200000.0
+		var e0 := world.entry + Vector2i(3, -8)
+		var kinds := [D.B.CALLBOX, D.B.HUT, D.B.SAR, D.B.HELIPAD]
+		var offs := [Vector2i(0, 0), Vector2i(2, 0), Vector2i(4, -1), Vector2i(7, -1)]
+		for k in 4:
+			for dy in range(-1, 3):
+				for dx in range(-1, 3):
+					world.trees[World.ti(e0 + offs[k] + Vector2i(dx, dy))] = 0
+			print("showcase ", D.BUILD[kinds[k]].name, " -> '", game.try_build(kinds[k], e0 + offs[k], true), "'")
 	if args.has("terra"): # dx,dy from the entrance: raise a mound there, then level a pad beside it
 		var tc: PackedStringArray = args.terra.split(",")
 		var tt := world.entry + Vector2i(int(tc[0]), int(tc[1]))

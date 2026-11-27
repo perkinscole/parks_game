@@ -24,6 +24,11 @@ class Glyph extends Control:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 	func _draw() -> void:
 		var r := Rect2(Vector2.ZERO, size)
+		if Icons.pic.has(kind):
+			# a photograph of the real model, on a round backing
+			draw_circle(size * 0.5, size.x * 0.5, Color("2c4658") if kind.begins_with("face") or kind == "ranger" or kind == "people" else Color(0.16, 0.26, 0.2, 0.9))
+			draw_texture_rect(Icons.pic[kind], r, false)
+			return
 		match kind:
 			"coin":
 				Art.circ(self, r, 0.5, 0.5, 0.45, Color("e0a82e"))
@@ -304,9 +309,10 @@ func _round_button(glyph: String, tip: String, cb: Callable, size: float = 42.0)
 		b.text = glyph
 		b.add_theme_font_size_override("font_size", 20)
 	else:
-		var gl := Glyph.new(glyph, size * 0.5)
-		gl.position = Vector2(size * 0.25, size * 0.25)
-		gl.size = Vector2(size * 0.5, size * 0.5)
+		var fill := 0.84 if Icons.pic.has(glyph) else 0.5
+		var gl := Glyph.new(glyph, size * fill)
+		gl.position = Vector2.ONE * size * (1.0 - fill) * 0.5
+		gl.size = Vector2.ONE * size * fill
 		b.add_child(gl)
 	return b
 
@@ -350,8 +356,8 @@ func _build_top() -> void:
 	rail.offset_top = 58
 	rail.add_theme_constant_override("separation", 6)
 	root.add_child(rail)
-	var panels := [["Park", "star", "Park overview and what visitors are saying"], ["Wildlife", "leaf", "Wildlife, weather and what your researchers know"],
-		["Staff", "people", "Hire and manage staff"], ["Research", "flask", "Research and discoveries"],
+	var panels := [["Park", "star", "Park overview and what visitors are saying"], ["Wildlife", "sp_elk" if Icons.pic.has("sp_elk") else "leaf", "Wildlife, weather and what your researchers know"],
+		["Staff", "face_ranger" if Icons.pic.has("face_ranger") else "people", "Hire and manage staff"], ["Research", "b_research" if Icons.pic.has("b_research") else "flask", "Research and discoveries"],
 		["Grants", "check", "Grants"], ["Finances", "coin", "Entry fee, income and costs"]]
 	for p in panels:
 		var id: String = p[0]
@@ -860,8 +866,13 @@ func _panel_wildlife() -> void:
 			var lvl := e.known(i)
 			var h := HBoxContainer.new()
 			h.add_theme_constant_override("separation", 8)
+			var shot := Glyph.new("sp_" + str(sp.id) if lvl > 0 else "unknown_species", 30)
+			shot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+			if lvl == 0:
+				shot.modulate = Color(1, 1, 1, 0.0)
+			h.add_child(shot)
 			var a := _label(sp.name if lvl > 0 else "Unstudied species", 14, INK if lvl > 0 else Color("6f7b82"))
-			a.custom_minimum_size.x = 138
+			a.custom_minimum_size.x = 104
 			h.add_child(a)
 			if lvl == 0:
 				h.add_child(_label("no data", 13, Color("6f7b82")))
@@ -891,6 +902,8 @@ func _panel_staff() -> void:
 		var def: Dictionary = D.STAFF[role]
 		var h := HBoxContainer.new()
 		h.add_theme_constant_override("separation", 6)
+		if Icons.pic.has("face_" + role):
+			h.add_child(Glyph.new("face_" + role, 40))
 		var a := _label("%s   %d / %d" % [def.name, st.count(role), st.capacity(role)], 16, Color("f2c879"))
 		a.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		h.add_child(a)

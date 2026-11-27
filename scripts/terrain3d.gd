@@ -18,7 +18,7 @@ const GH := World.H * SUB + 1
 const LIT := [D.B.VISITOR_CENTER, D.B.RANGER, D.B.RESEARCH, D.B.SNACK, D.B.CAMP, D.B.GATE, D.B.RESTROOM]
 const NO_FOUNDATION := [D.B.CALLBOX, D.B.HELIPAD, D.B.BIN, D.B.SIGN, D.B.PICNIC, D.B.TRAILHEAD, D.B.CRAG, D.B.GATE, D.B.CAMP]
 # footprint width (in tiles) that supplied building models are scaled to
-const EXT_WIDTH := {D.B.PICNIC: 0.42, D.B.TRAILHEAD: 0.36, D.B.HIDE: 0.62, D.B.RESTROOM: 0.8, D.B.SNACK: 0.72, D.B.GATE: 1.35,
+const EXT_WIDTH := {D.B.CALLBOX: 0.26, D.B.HUT: 0.82, D.B.SAR: 1.85, D.B.HELIPAD: 1.85, D.B.PICNIC: 0.42, D.B.TRAILHEAD: 0.36, D.B.HIDE: 0.62, D.B.RESTROOM: 0.8, D.B.SNACK: 0.72, D.B.GATE: 1.35,
 	D.B.OVERLOOK: 0.92, D.B.VISITOR_CENTER: 1.85, D.B.RANGER: 1.5, D.B.RESEARCH: 1.6, D.B.CAMP: 1.85, D.B.BIN: 0.3, D.B.SIGN: 0.2, D.B.CRAG: 0.9}
 const VEG := ["trunk", "leaf", "conifer", "conifer2", "rock", "rock2", "rock_red", "flower", "bush", "reed", "grass"]
 const HD := {"conifer": "conifer_hd", "conifer2": "conifer2_hd", "leaf": "leaf_hd"}
