@@ -155,7 +155,7 @@ func maybe_incident(gr, t: Vector2i) -> void:
 		# the steeper the ground, the more the quality of the trail matters
 		var grade: int = w.trail_grade[i]
 		var steep := w.slope_at(t)
-		p *= [1.5, 1.0, 0.6][grade] * (1.0 + steep * [6.0, 2.5, 0.4][grade])
+		p *= [1.5, 1.0, 0.6, 0.5, 2.2][grade] * (1.0 + steep * [6.0, 2.5, 0.4, 0.8, 5.0][grade])
 		if steep > 0.6 and w.sign_cover[i] == 0:
 			p *= 1.8 # nobody warned them
 	if g.has_tech("trails"): p *= 0.6

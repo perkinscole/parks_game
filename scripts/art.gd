@@ -360,6 +360,32 @@ static func icon(ci: CanvasItem, kind, r: Rect2) -> bool:
 				return true
 		return false
 	match kind:
+		"bikepath", "mtb":
+			var paved: bool = kind == "bikepath"
+			if paved:
+				grad(ci, r, [0.4, 0.4, 0.6, 0.4, 0.86, 1.0, 0.14, 1.0], Color("5a5e68"), Color("7a7f8a"))
+				for k in 3:
+					line(ci, r, 0.5, 0.46 + k * 0.18, 0.5, 0.54 + k * 0.18, Color("f2f2f2"), 0.02)
+			else:
+				grad(ci, r, [0.0, 1.0, 0.0, 0.7, 1.0, 0.36, 1.0, 1.0], Color("6f9a55"), Color("4c7a3c"))
+				curve(ci, r, [0.04, 0.94, 0.34, 0.8, 0.5, 0.72, 0.7, 0.6, 0.96, 0.44], Color("8a6a3f"), 0.07)
+				curve(ci, r, [0.04, 0.94, 0.34, 0.8, 0.5, 0.72, 0.7, 0.6, 0.96, 0.44], Color("c9a871"), 0.035)
+			# the bike
+			var by := 0.62 if paved else 0.5
+			var tilt := 0.0 if paved else -0.07
+			for wx in [0.34, 0.66]:
+				var wy: float = by + 0.1 + (wx - 0.5) * tilt * -2.0
+				ci.draw_arc(P(r, wx, wy), S * 0.11, 0, TAU, 20, Color("1d1f24"), S * 0.04, true)
+				circ(ci, r, wx, wy, 0.02, Color("9aa0aa"))
+			var fc := Color("e8443a") if paved else Color("f2b632")
+			var ay := by + 0.1 + 0.16 * tilt * 2.0
+			var cy := by + 0.1 - 0.16 * tilt * 2.0
+			curve(ci, r, [0.34, ay, 0.47, by - 0.08, 0.6, by - 0.1, 0.66, cy], fc, 0.035)
+			curve(ci, r, [0.47, by - 0.08, 0.52, by + 0.08, 0.34, ay], fc, 0.035)
+			line(ci, r, 0.52, by + 0.08, 0.6, by - 0.1, fc, 0.035)
+			line(ci, r, 0.43, by - 0.12, 0.51, by - 0.12, Color("1d1f24"), 0.035)
+			line(ci, r, 0.6, by - 0.1, 0.62, by - 0.17, Color("1d1f24"), 0.03)
+			line(ci, r, 0.57, by - 0.17, 0.67, by - 0.17, Color("1d1f24"), 0.03)
 		"dock":
 			grad(ci, r, [0.0, 0.5, 1.0, 0.5, 1.0, 1.0, 0.0, 1.0], Color("4fa3d6"), Color("2a6fa3"))
 			for k in 3:

@@ -902,7 +902,7 @@ func rebuild_nav() -> void:
 			walk_nav.set_point_solid(t, not is_walk)
 			if is_walk:
 				# steep going costs more, so people choose the switchbacks when there are some
-				walk_nav.set_point_weight_scale(t, (1.0 if b == D.B.TRAIL else (1.4 if b == D.B.PARKING else 2.2)) * (1.0 + [3.0, 2.0, 0.5][trail_grade[i]] * maxf(0.0, slope_at(t) - 0.3)))
+				walk_nav.set_point_weight_scale(t, (1.0 if b == D.B.TRAIL else (1.4 if b == D.B.PARKING else 2.2)) * (1.0 + [3.0, 2.0, 0.5, 1.0, 3.0][trail_grade[i]] * maxf(0.0, slope_at(t) - 0.3)))
 			var staff_ok := is_walk or not is_water(ter)
 			staff_nav.set_point_solid(t, not staff_ok)
 			if staff_ok:
@@ -948,7 +948,7 @@ func _flood_accessible() -> void:
 			var j := ti(q)
 			var b := build[j]
 			var ok := b == D.B.ROAD or b == D.B.GATE or b == D.B.PARKING
-			if b == D.B.TRAIL and trail_grade[j] >= 1 and absf(height[j] - height[ti(c)]) <= 0.35:
+			if b == D.B.TRAIL and trail_grade[j] >= 1 and trail_grade[j] <= 3 and absf(height[j] - height[ti(c)]) <= 0.35:
 				ok = true
 			if ok:
 				accessible[j] = 1
@@ -968,6 +968,17 @@ func access_share() -> Array:
 				ok += 1
 				break
 	return [ok, total]
+
+
+## Tiles of bike path and mountain bike trail: [paved, singletrack]
+func bike_tiles() -> Array:
+	var paved := 0
+	var single := 0
+	for t in trail_tiles:
+		var gr := trail_grade[ti(t)]
+		if gr == 3: paved += 1
+		elif gr == 4: single += 1
+	return [paved, single]
 
 
 func dock_count() -> int:

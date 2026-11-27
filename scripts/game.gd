@@ -303,8 +303,17 @@ func update_appeal() -> void:
 			D.B.CRAG: s.quality = 0.7
 			D.B.VISITOR_CENTER: s.quality = 0.8 if has_tech("interp") else 0.6
 			D.B.KAYAK: s.quality = 0.35 + world.scenic(st) * 0.6
+			D.B.BIKES:
+				var bt: Array = world.bike_tiles()
+				s.quality = clampf((bt[0] + bt[1] * 1.3) / 70.0, 0.1, 1.0)
+			D.B.SKI: s.quality = clampf(world.trail_tiles.size() / 140.0, 0.25, 1.0)
+			D.B.SNOWMOBILE: s.quality = 0.7
 			D.B.MARINA: s.quality = 0.6
 			_: s.quality = 0.5
+		# winter sports only run in winter
+		if D.BUILD[s.kind].has("season") and D.BUILD[s.kind].season != season():
+			s.quality = 0.0
+			continue
 		if s.kind in D.ATTRACTIONS and not s.access.is_empty():
 			var base := 0.5 + float(s.quality)
 			if s.kind == D.B.VISITOR_CENTER: base = 1.6
@@ -397,9 +406,9 @@ func set_fishing(on: bool) -> void:
 ## Lays or upgrades a trail of the given grade (0 rough, 1 graded, 2 built).
 func build_trail(t: Vector2i, grade: int) -> String:
 	var i := World.ti(t)
-	var price: int = [5, 12, 45][grade]
+	var price: int = [5, 12, 45, 30, 14][grade]
 	if world.build[i] == D.B.TRAIL:
-		if world.trail_grade[i] >= grade:
+		if world.trail_grade[i] == grade or world.is_water(world.terrain[i]):
 			return "Already a trail"
 		if money < price:
 			return "Not enough money"

@@ -100,6 +100,8 @@ func _pick_type() -> Dictionary:
 	for vt in D.VTYPES:
 		if vt.has("needs") and w.count_kind(vt.needs) == 0:
 			continue
+		if vt.has("needs") and D.BUILD[vt.needs].has("season") and D.BUILD[vt.needs].season != g.season():
+			continue
 		opts.append(vt)
 		total += vt.weight
 	var r := rng.randf() * total
@@ -116,6 +118,8 @@ func _lot_score(lot: Vector2i, vt: Dictionary) -> float:
 		var pref: float = vt.prefs.get(s.kind, 0.0)
 		if pref <= 0.0:
 			continue
+		if D.BUILD[s.kind].has("season") and D.BUILD[s.kind].season != g.season():
+			continue # shut for the season
 		var r := w.walk_to_structure(lot, s)
 		if r[0] >= 0 and r[0] <= vt.vrange:
 			best = maxf(best, pref * (0.35 + float(s.quality)))
@@ -209,7 +213,7 @@ func _update_group(gr: Group, dt: float) -> void:
 			var climb: float = w.height[World.ti(ahead)] - w.height[World.ti(here)]
 			var hi := World.ti(here)
 			var grade: int = w.trail_grade[hi] if w.build[hi] == D.B.TRAIL else 1
-			var pace: float = [0.85, 1.0, 1.1][grade] / (1.0 + (2.4 if climb > 0.0 else 1.0) * [1.4, 1.0, 0.45][grade] * maxf(0.0, absf(climb) - 0.15))
+			var pace: float = [0.85, 1.0, 1.1, 1.15, 0.9][grade] / (1.0 + (2.4 if climb > 0.0 else 1.0) * [1.4, 1.0, 0.45, 0.8, 1.3][grade] * maxf(0.0, absf(climb) - 0.15))
 			gr.dist += gr.speed * dt * maxf(pace, 0.22)
 			# still out on the trail when the light goes
 			if not gr.night_checked and (g.minutes >= 20.5 * 60.0 or g.minutes < 5.0 * 60.0) and w.build[hi] == D.B.TRAIL:
@@ -320,6 +324,9 @@ func remove_group(gr: Group) -> void:
 
 func _enter_tile(gr: Group, t: Vector2i) -> void:
 	var i := World.ti(t)
+	if w.build[i] == D.B.TRAIL and w.trail_grade[i] == 4 and gr.vt.id != "cyclist":
+		gr.sat -= 0.35 # walkers do not enjoy dodging bikes
+		if gr.walked % 9 == 0: _think(gr, "Bikes kept flying past us on the trail")
 	if w.sign_cover[i] == 1 and not gr.registered and w.build[i] == D.B.TRAIL:
 		gr.registered = true # they have seen a map and know the way back
 	gr.walked += 1
@@ -418,6 +425,20 @@ func _apply_visit(gr: Group, s: Dictionary) -> void:
 			gr.sat += 4.0 + 18.0 * q * minf(pref, 1.3)
 			if q > 0.7: _think(gr, "We watched so much wildlife from the hide")
 			elif q < 0.3: _think(gr, "We sat in the hide and saw nothing")
+		D.B.BIKES:
+			gr.sat += 6.0 + 16.0 * q * minf(pref, 1.3)
+			g.add_money(gr.n * rng.randf_range(10.0, 16.0), "Bike rentals")
+			var bt: Array = w.bike_tiles()
+			if q < 0.3: _think(gr, "We rented bikes but there was hardly anywhere to ride")
+			elif bt[1] > 20 and rng.randf() < 0.4: _think(gr, "The mountain bike trails were a thrill")
+		D.B.SKI:
+			gr.sat += 8.0 + 14.0 * q * minf(pref, 1.2)
+			g.add_money(gr.n * rng.randf_range(10.0, 15.0), "Winter sports")
+			if q > 0.7: _think(gr, "Skiing through the silent forest was unforgettable")
+		D.B.SNOWMOBILE:
+			gr.sat += 13.0 * pref
+			g.add_money(gr.n * rng.randf_range(28.0, 40.0), "Winter sports")
+			_think(gr, "Tearing across the snow was a blast")
 		D.B.KAYAK:
 			gr.sat += 8.0 + 12.0 * q * minf(pref, 1.2)
 			g.add_money(gr.n * rng.randf_range(9.0, 14.0), "Boat rentals")
@@ -456,6 +477,9 @@ func _finalize(gr: Group) -> void:
 		if avg > 0.75 and hike >= 0.5: _think(gr, "The trails here are gorgeous")
 		elif avg < 0.12: _think(gr, "The walk was dull, all roads and parking lots")
 	# the roar of engines carries a long way over water
+	if g.season() == 3 and w.count_kind(D.B.SNOWMOBILE) > 0 and hike >= 0.5 and gr.walked > 8:
+		gr.sat -= 7.0
+		if rng.randf() < 0.4: _think(gr, "Snowmobiles ruined the quiet of the winter woods")
 	if w.count_kind(D.B.MARINA) > 0 and hike >= 0.5 and gr.walked > 12:
 		gr.sat -= 5.0
 		if rng.randf() < 0.3: _think(gr, "You could hear motorboats from every trail")

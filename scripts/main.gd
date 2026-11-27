@@ -852,7 +852,7 @@ func _brush_tiles(c: Vector2i) -> Array[Vector2i]:
 func _drag_tiles(a: Vector2i, b: Vector2i) -> Array[Vector2i]:
 	if tool is String and tool == "switchback":
 		return _switchback(a, b)
-	if tool is String and (tool == "path" or tool == "steps" or tool == "dock"):
+	if tool is String and (tool == "path" or tool == "steps" or tool == "dock" or tool == "bikepath" or tool == "mtb"):
 		return _line(a, b)
 	if tool is int and tool in LINEAR:
 		return _line(a, b)
@@ -871,7 +871,9 @@ func _tile_ok(t: Vector2i) -> bool:
 		"switchback": return world.can_build(D.B.TRAIL, t) == ""
 		"dock": return world.build[i] == D.B.NONE and world.terrain[i] == D.T.WATER
 		"path": return world.can_build(D.B.TRAIL, t) == ""
-		"steps": return world.can_build(D.B.TRAIL, t) == "" or (world.build[i] == D.B.TRAIL and world.trail_grade[i] < 2)
+		"steps": return world.can_build(D.B.TRAIL, t) == "" or (world.build[i] == D.B.TRAIL and world.trail_grade[i] != 2 and not world.is_water(world.terrain[i]))
+		"bikepath": return world.can_build(D.B.TRAIL, t) == "" or (world.build[i] == D.B.TRAIL and world.trail_grade[i] != 3 and not world.is_water(world.terrain[i]))
+		"mtb": return world.can_build(D.B.TRAIL, t) == "" or (world.build[i] == D.B.TRAIL and world.trail_grade[i] != 4 and not world.is_water(world.terrain[i]))
 		"bulldoze": return world.build[i] != D.B.NONE and t != world.entry
 		"weed": return world.invasive[i] > 0.0 and world.inv_seen[i] == 1
 		"plant":
@@ -988,8 +990,8 @@ func _apply_drag() -> void:
 						game.say("Not enough money to finish the dock.", "warn")
 						break
 					done = why4 == ""
-				"path", "steps":
-					var why3 := game.build_trail(t, 0 if tool == "path" else 2)
+				"path", "steps", "bikepath", "mtb":
+					var why3 := game.build_trail(t, {"path": 0, "steps": 2, "bikepath": 3, "mtb": 4}[tool])
 					if why3 == "Not enough money":
 						game.say("Not enough money to finish the trail.", "warn")
 						break
@@ -1150,9 +1152,12 @@ func _dev_hooks(args: Dictionary) -> void:
 		game.level = 4
 		game.money = 200000.0
 		var e0 := world.entry + Vector2i(3, -8)
-		var kinds := [D.B.CALLBOX, D.B.HUT, D.B.SAR, D.B.HELIPAD]
-		var offs := [Vector2i(0, 0), Vector2i(2, 0), Vector2i(4, -1), Vector2i(7, -1)]
-		for k in 4:
+		var kinds := [D.B.CALLBOX, D.B.HUT, D.B.SAR, D.B.HELIPAD, D.B.BIKES, D.B.SKI, D.B.SNOWMOBILE]
+		var offs := [Vector2i(0, 0), Vector2i(2, 0), Vector2i(4, -1), Vector2i(7, -1), Vector2i(0, 3), Vector2i(2, 3), Vector2i(4, 3)]
+		for y in range(0, 12):
+			game.build_trail(e0 + Vector2i(-2, 4 - y), 3)
+			game.build_trail(e0 + Vector2i(-4, 4 - y), 4)
+		for k in kinds.size():
 			for dy in range(-1, 3):
 				for dx in range(-1, 3):
 					world.trees[World.ti(e0 + offs[k] + Vector2i(dx, dy))] = 0

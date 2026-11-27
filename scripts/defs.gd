@@ -3,8 +3,8 @@ extends RefCounted
 ## Static game data: terrain, buildings, visitors, species, research, grants.
 
 const TILE := 32
-const MAP_W := 224
-const MAP_H := 168
+const MAP_W := 320
+const MAP_H := 240
 
 ## Large regions of the park, each with its own look, wildlife and weather.
 enum BIOME { FOREST, VALLEY, WETLAND, DESERT, ALPINE }
@@ -14,7 +14,7 @@ enum T { DEEP, WATER, SAND, GRASS, MEADOW, FOREST, ROCK, PEAK }
 enum B {
 	NONE, ROAD, TRAIL, PARKING, GATE, VISITOR_CENTER, RESTROOM, BIN, OVERLOOK,
 	PICNIC, CAMP, SNACK, RANGER, RESEARCH, CRAG, SIGN, HIDE, TRAILHEAD,
-	CALLBOX, HUT, SAR, HELIPAD, KAYAK, MARINA
+	CALLBOX, HUT, SAR, HELIPAD, KAYAK, MARINA, BIKES, SKI, SNOWMOBILE
 }
 
 # The park grows through four levels. Each one opens more to build, and each
@@ -75,6 +75,12 @@ const BUILD := {
 		desc = "A trained team with a truck and litters. Sent to serious emergencies up to 60 tiles away, much faster than a ranger on foot. One call-out at a time."},
 	B.HELIPAD: {name = "Rescue Helipad", cost = 15000, upkeep = 140, size = Vector2i(2, 2), dist = 6, str = 0.8, level = 4,
 		desc = "A helicopter reaches anywhere in the park in moments and saves lives nothing else can. Each flight costs $600, and the noise empties the sky of eagles."},
+	B.BIKES: {name = "Bike Rental", cost = 1600, upkeep = 14, size = Vector2i(1, 1), dist = 2, str = 0.25, cap = 12, level = 2,
+		desc = "Bikes and helmets by the day. Worth as much as the riding you offer: lay Bike Path and Mountain Bike Trail for riders to use. Brings cyclists to the park."},
+	B.SKI: {name = "Nordic Ski Center", cost = 2200, upkeep = 16, size = Vector2i(1, 1), dist = 2, str = 0.25, cap = 14, level = 2, season = 3,
+		desc = "Winter only. Cross-country skis and groomed tracks along your trails. Quiet and light on the land, and it fills the park in the dead season. Better the more trail you have."},
+	B.SNOWMOBILE: {name = "Snowmobile Rental", cost = 5500, upkeep = 45, size = Vector2i(1, 1), dist = 9, str = 0.9, cap = 12, level = 3, season = 3,
+		desc = "Winter only. Nearly three times the income of skis. But winter is when animals are living on their last reserves, and engines send them running for 9 tiles around. Skiers and walkers hate the noise."},
 	B.KAYAK: {name = "Kayak Rental", cost = 1800, upkeep = 15, size = Vector2i(1, 1), dist = 2, str = 0.2, cap = 10, level = 2,
 		desc = "Paddles and life vests at the water's edge. Quiet: herons and beavers barely notice. Modest income, and visitors love it where the scenery is good."},
 	B.MARINA: {name = "Motorboat Rental", cost = 5000, upkeep = 50, size = Vector2i(1, 1), dist = 8, str = 0.9, cap = 14, level = 3,
@@ -89,6 +95,7 @@ const CATEGORIES := [
 	{id = "attractions", name = "Attractions", tools = [B.OVERLOOK, B.PICNIC, B.CAMP, B.CRAG, B.HIDE]},
 	{id = "ops", name = "Operations", tools = [B.RANGER, B.RESEARCH, B.CALLBOX, B.HUT, B.SAR, B.HELIPAD]},
 	{id = "land", name = "Land", tools = ["bulldoze", "plant", "weed"]},
+	{id = "sport", name = "Sport", tools = [B.BIKES, "bikepath", "mtb", B.SKI, B.SNOWMOBILE]},
 	{id = "water", name = "Water", tools = ["dock", B.KAYAK, B.MARINA]},
 	{id = "terrain", name = "Terrain", tools = ["raise", "lower", "level", "smooth"]},
 ]
@@ -96,6 +103,8 @@ const CATEGORIES := [
 const TOOLS := {
 	"bulldoze": {name = "Demolish", cost = 10, desc = "Remove roads, trails and buildings. Drag an area. $10 per tile."},
 	"plant": {name = "Plant Native Trees", cost = 25, desc = "Restore habitat by planting trees on open land. Drag an area. Requires Native Restoration research."},
+	"bikepath": {name = "Bike Path", cost = 30, level = 2, desc = "A smooth paved path for bikes, wheelchairs, strollers and walkers alike. Safe, quick and fully accessible, but pavement is harder on the land than dirt."},
+	"mtb": {name = "MTB Trail", cost = 14, level = 3, desc = "Narrow dirt singletrack for mountain bikes. Riders love it, especially on hills. Crashes are common, tyres erode the tread, and hikers resent sharing it."},
 	"dock": {name = "Dock / Boardwalk", cost = 60, desc = "A timber walkway over shallow water. Paths cannot cross water without one. Use it for footbridges, fishing piers and lakeshore boardwalks; it is level and smooth, so anyone can use it."},
 	"path": {name = "Rough Path", cost = 5, desc = "A faint beaten track, barely cleared, so it is cheap and light on the land, but it is easy to lose: hikers go astray three times as often. On a slope it is slow and where most injuries happen."},
 	"steps": {name = "Built Trail", cost = 45, level = 2, desc = "Stone steps, drains and handrails. Safe and quick even on steep ground, and it upgrades any path it is laid over. Costly to build."},
@@ -117,23 +126,26 @@ const EFFECTS := {
 	B.TRAILHEAD: [1, 0, 1, 0, 0],
 	B.CALLBOX: [0, 0, 1, 0, 0], B.HUT: [1, -1, 2, 0, 0], B.SAR: [0, -1, 2, 0, 0], B.HELIPAD: [0, -2, 2, 0, 0],
 	B.KAYAK: [1, 0, 0, 1, 0], B.MARINA: [1, -2, 0, 2, 0], "dock": [1, -1, 1, 0, 0],
+	B.BIKES: [1, 0, 0, 1, 0], B.SKI: [2, 0, 0, 1, 0], B.SNOWMOBILE: [1, -2, -1, 2, 0], "bikepath": [1, -1, 1, 0, 0], "mtb": [1, -1, -1, 0, 0],
 	"path": [1, 0, -1, 0, 0], "steps": [1, -1, 2, 0, 0],
 	"switchback": [1, -1, 1, 0, 0], "bulldoze": [0, 1, 0, 0, 0], "plant": [0, 2, 0, 0, 0], "weed": [0, 2, 0, 0, 0],
 	"raise": [0, -1, 0, 0, 0], "lower": [0, -1, 0, 0, 0], "level": [0, -1, 0, 0, 0], "smooth": [0, -1, 0, 0, 0],
 }
 
-const ATTRACTIONS := [B.OVERLOOK, B.VISITOR_CENTER, B.PICNIC, B.CAMP, B.SNACK, B.CRAG, B.HIDE, B.KAYAK, B.MARINA]
+const ATTRACTIONS := [B.OVERLOOK, B.VISITOR_CENTER, B.PICNIC, B.CAMP, B.SNACK, B.CRAG, B.HIDE, B.KAYAK, B.MARINA, B.BIKES, B.SKI, B.SNOWMOBILE]
 
 # range: max one-way walk in tiles. hike: how much they value long, scenic walks.
 const VTYPES := [
 	{id = "sightseer", name = "Sightseers", weight = 30.0, vrange = 14, hike = 0.15, stops = 3,
-		prefs = {B.OVERLOOK: 1.0, B.VISITOR_CENTER: 0.9, B.PICNIC: 0.5, B.SNACK: 0.6, B.HIDE: 0.3, B.KAYAK: 0.6, B.MARINA: 1.0}},
+		prefs = {B.OVERLOOK: 1.0, B.VISITOR_CENTER: 0.9, B.PICNIC: 0.5, B.SNACK: 0.6, B.HIDE: 0.3, B.KAYAK: 0.6, B.MARINA: 1.0, B.SNOWMOBILE: 0.9, B.SKI: 0.4}},
 	{id = "family", name = "Family", weight = 25.0, vrange = 11, hike = 0.1, stops = 3,
-		prefs = {B.OVERLOOK: 0.7, B.VISITOR_CENTER: 1.0, B.PICNIC: 1.0, B.SNACK: 0.8, B.HIDE: 0.5, B.KAYAK: 0.9, B.MARINA: 1.0}},
+		prefs = {B.OVERLOOK: 0.7, B.VISITOR_CENTER: 1.0, B.PICNIC: 1.0, B.SNACK: 0.8, B.HIDE: 0.5, B.KAYAK: 0.9, B.MARINA: 1.0, B.BIKES: 0.8, B.SKI: 0.9, B.SNOWMOBILE: 0.9}},
 	{id = "hiker", name = "Hikers", weight = 22.0, vrange = 60, hike = 1.0, stops = 2,
-		prefs = {B.OVERLOOK: 1.0, B.PICNIC: 0.3, B.HIDE: 0.5, B.VISITOR_CENTER: 0.2}},
+		prefs = {B.OVERLOOK: 1.0, B.PICNIC: 0.3, B.HIDE: 0.5, B.VISITOR_CENTER: 0.2, B.SKI: 1.2}},
 	{id = "naturalist", name = "Naturalists", weight = 10.0, vrange = 34, hike = 0.6, stops = 2,
-		prefs = {B.HIDE: 1.4, B.OVERLOOK: 0.8, B.VISITOR_CENTER: 0.5, B.KAYAK: 1.1, B.MARINA: 0.0}},
+		prefs = {B.HIDE: 1.4, B.OVERLOOK: 0.8, B.VISITOR_CENTER: 0.5, B.KAYAK: 1.1, B.MARINA: 0.0, B.SKI: 0.9}},
+	{id = "cyclist", name = "Cyclists", weight = 10.0, vrange = 70, hike = 0.7, stops = 2, needs = B.BIKES,
+		prefs = {B.BIKES: 1.6, B.OVERLOOK: 0.7, B.SNACK: 0.5, B.PICNIC: 0.3}},
 	{id = "climber", name = "Climbers", weight = 8.0, vrange = 45, hike = 0.3, stops = 1, needs = B.CRAG,
 		prefs = {B.CRAG: 1.6, B.SNACK: 0.3}},
 	{id = "camper", name = "Campers", weight = 9.0, vrange = 30, hike = 0.5, stops = 2, needs = B.CAMP,

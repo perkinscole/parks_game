@@ -1273,7 +1273,7 @@ func _issues() -> Array:
 	for k in range(0, w.trail_tiles.size(), 3):
 		var tt: Vector2i = w.trail_tiles[k]
 		var ti := World.ti(tt)
-		if w.sign_cover[ti] == 0 and w.trail_grade[ti] < 2 and w.slope_at(tt) > 0.7:
+		if w.sign_cover[ti] == 0 and w.trail_grade[ti] in [0, 1, 4] and w.slope_at(tt) > 0.7:
 			steep_n += 1
 			if steep_t == null:
 				steep_t = tt

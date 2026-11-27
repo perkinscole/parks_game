@@ -141,6 +141,28 @@ static func structure(kind: int) -> ArrayMesh:
 			m.block(V(0, 0.3, 0.02), V(0.3, 0.025, 0.01), Color("3f8f5a"))
 			m.block(V(-0.05, 0.25, 0.02), V(0.25, 0.025, 0.01), Color("e8554e"))
 			m.gable(V(0, 0.5, 0), V(0.72, 0.14, 0.26), Color("8a5a35"))
+		D.B.BIKES:
+			m.block(V(0, 0, 0), V(0.8, 0.04, 0.6), Color("b9b2a0"))
+			m.block(V(-0.2, 0.04, -0.12), V(0.34, 0.3, 0.3), WOOD)
+			m.gable(V(-0.2, 0.34, -0.12), V(0.44, 0.16, 0.4), Color("d9534f"))
+			for k in 3:
+				m.cyl(V(0.12 + k * 0.1, 0.1, 0.02), 0.07, 0.02, 10, [Color("2e2e2e"), Color("2e2e2e"), Color("2e2e2e")][k])
+				m.block(V(0.12 + k * 0.1, 0.12, 0.02), V(0.02, 0.1, 0.22), [Color("e8554e"), Color("f2b632"), Color("4a90d9")][k])
+		D.B.SKI:
+			m.block(V(0, 0, 0), V(0.82, 0.05, 0.62), Color("e9eef0"))
+			m.block(V(-0.1, 0.05, -0.08), V(0.5, 0.3, 0.36), WOOD_D)
+			m.gable(V(-0.1, 0.35, -0.08), V(0.62, 0.26, 0.48), Color("f4f6f8"))
+			for k in 4:
+				m.block(V(0.26 + k * 0.035, 0.05, 0.16), V(0.015, 0.42, 0.03), [Color("d9534f"), Color("4a90d9"), Color("f2b632"), Color("3f8f5a")][k])
+			m.block(V(-0.3, 0.35, -0.16), V(0.07, 0.26, 0.07), Color("7b7f87"))
+		D.B.SNOWMOBILE:
+			m.block(V(0, 0, 0), V(0.86, 0.05, 0.66), Color("e9eef0"))
+			m.block(V(-0.2, 0.05, -0.12), V(0.4, 0.3, 0.36), Color("3a3d44"))
+			m.gable(V(-0.2, 0.35, -0.12), V(0.5, 0.16, 0.46), Color("e8a23a"))
+			m.blob(V(0.22, 0.13, 0.08), V(0.09, 0.07, 0.2), Color("d9534f"))
+			m.block(V(0.22, 0.17, 0.0), V(0.1, 0.05, 0.1), Color("2e2e2e"))
+			m.block(V(0.22, 0.05, 0.08), V(0.14, 0.03, 0.34), Color("2e2e2e"))
+			m.cyl(V(-0.32, 0.05, 0.24), 0.05, 0.16, 8, Color("d9534f"))
 		D.B.KAYAK:
 			m.block(V(0, 0, 0), V(0.8, 0.05, 0.6), WOOD)
 			m.block(V(-0.2, 0.05, -0.12), V(0.34, 0.3, 0.3), CREAM)
